@@ -278,6 +278,38 @@ class DatasetWriter:
 
         validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
 
+        # Guard against dropped image writes: the number of PNG frames on disk must match the
+        # number of recorded frames, otherwise video encoding would silently misalign frames.
+        # Flush async writes first so the on-disk count is final.
+        self._wait_image_writer()
+        episode_index = episode_buffer["episode_index"]
+        if isinstance(episode_index, np.ndarray):
+            episode_index = int(episode_index.flat[0])
+        episode_length = episode_buffer["size"]
+        streaming = self._streaming_encoder is not None
+        png_keys = [
+            key
+            for key in self._meta.camera_keys
+            if key not in self._meta.depth_keys and not (streaming and key in self._meta.video_keys)
+        ]
+        mismatched = {}
+        for key in png_keys:
+            img_dir = self._get_image_file_dir(episode_index, key)
+            num_pngs = len(list(img_dir.glob("*.png"))) if img_dir.is_dir() else 0
+            if num_pngs != episode_length:
+                mismatched[key] = num_pngs
+        if mismatched:
+            details = ", ".join(f"{key}: {count} PNG(s)" for key, count in mismatched.items())
+            logger.warning(
+                "\n"
+                + "!" * 80
+                + f"\nEpisode {episode_index}: number of PNG frames on disk does not match the "
+                f"{episode_length} recorded frames ({details}).\n"
+                "Discarding this episode and moving on.\n" + "!" * 80
+            )
+            self.clear_episode_buffer(delete_images=True)
+            return
+
         # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
         tasks = episode_buffer.pop("task")
