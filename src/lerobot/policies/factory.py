@@ -177,6 +177,19 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    # Xbotics：OpenVLA 的权重不是 LeRobot 训出来的，目录里没有保存的前后处理流水，
+    # 不管给没给 pretrained_path 都按配置现建（与 0.5.x 线行为一致）。放在最前面，
+    # 否则带着 pretrained_path 会去目录里读那份并不存在的 policy_preprocessor.json。
+    from .openvla.configuration_openvla import OpenVLAConfig
+
+    if isinstance(policy_cfg, OpenVLAConfig):
+        from .openvla.processor_openvla import make_openvla_pre_post_processors
+
+        return make_openvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
