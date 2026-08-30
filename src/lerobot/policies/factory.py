@@ -32,6 +32,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from lerobot.policies.openvla.configuration_openvla import OpenVLAConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -143,6 +144,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "openvla":
+        from lerobot.policies.openvla.modeling_openvla import OpenVLAPolicy
+
+        return OpenVLAPolicy
     elif name == "vla0_smol":
         from lerobot.policies.vla0_smol.modeling_vla0_smol import VLA0SmolPolicy
 
@@ -207,6 +212,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "openvla":
+        return OpenVLAConfig(**kwargs)
     elif policy_type == "vla0_smol":
         return VLA0SmolConfig(**kwargs)
     elif policy_type == "reward_classifier":
@@ -277,6 +284,14 @@ def make_pre_post_processors(
         NotImplementedError: If a processor factory is not implemented for the given
             policy configuration type.
     """
+    if isinstance(policy_cfg, OpenVLAConfig):
+        from lerobot.policies.openvla.processor_openvla import make_openvla_pre_post_processors
+
+        return make_openvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     if pretrained_path:
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
         if isinstance(policy_cfg, GrootConfig):
