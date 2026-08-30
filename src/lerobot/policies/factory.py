@@ -41,6 +41,7 @@ from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
+from lerobot.policies.vla0_smol.configuration_vla0_smol import VLA0SmolConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
@@ -142,6 +143,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "vla0_smol":
+        from lerobot.policies.vla0_smol.modeling_vla0_smol import VLA0SmolPolicy
+
+        return VLA0SmolPolicy
     elif name == "sarm":
         from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 
@@ -202,6 +207,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "vla0_smol":
+        return VLA0SmolConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
