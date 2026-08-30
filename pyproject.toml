@@ -91,6 +91,16 @@ dependencies = [
     "deepdiff>=7.0.1,<9.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
+
+    # ── Xbotics ──────────────────────────────────────────────────────────────
+    # SO-101 仿真环境。核心依赖而非 extra：本 fork 的仿真评测口（--env.type=so101_sim）
+    # 是常备功能，不做「按需挑选」。
+    #
+    # 平台标记不是在做功能挑选，是绕开一个装不上的事实：mani-skill 的物理后端 sapien
+    # 只发 x86_64 / macOS / win 轮子，没有 aarch64。地瓜 RDK S100/S600 板端（aarch64）
+    # 走 lerobot[feetech] 只做舵机与相机，本来也不跑仿真 —— 不加这个标记，板端 install
+    # 会直接失败。
+    "so101_sim @ git+https://github.com/Xbotics-Embodied-AI-club/Xbotics-SO101-Sim.git ; platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l'",
 ]
 
 # Optional dependencies

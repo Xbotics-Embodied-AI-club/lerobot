@@ -388,6 +388,92 @@ class MetaworldEnv(EnvConfig):
         }
 
 
+@EnvConfig.register_subclass("so101_sim")
+@dataclass
+class So101SimEnv(EnvConfig):
+    """SO-101 仿真（ManiSkill3）评测环境。
+
+    走 make_env 的通用分支：import package_name（=so101_sim）触发注册，再
+    gym.make(gym_id=SO101Sim-v1, **gym_kwargs)。
+
+    task 字段取仿真包注册的环境 id，三个分发场景（每个都是 top + wrist 双相机）：
+    SO101PickPlaceCube40-v1 / SO101PickPlaceCube20-v1 / SO101PickPlaceCylinder40-v1；
+    另有三个同名带 Train 后缀的孪生环境（...Cube40Train-v1 等）供 RL 训练用，
+    它们只改 reward 与步数预算，物理与分发场景逐位相同。
+
+    ★两个参数必须与「被评策略所训数据是怎么产生的」对齐，否则不报错、只会安静跑错：
+
+    - control_mode：已发布的 SO-101 仿真数据集录的是**绝对关节角**，要传
+      pd_joint_pos；不传则用机器人默认的归一化增量模式。把绝对角当增量喂进去，
+      每一维都会被 clip 到 ±1，手臂以最大速度朝错误方向走。
+    - episode_length：要装得下数据集里的轨迹长度。策略在完成动作之前被 TimeLimit
+      截断，评测端看不出来。
+
+    两种情况得到的都是一个低成功率，而它会被误读成「策略没学会」。
+    """
+
+    task: str = "SO101PickPlaceCube40-v1"
+    fps: int = 20
+    episode_length: int = 400
+    obs_type: str = "pixels_agent_pos"
+    obs_mode: str = "rgb"
+    render_mode: str = "rgb_array"
+    observation_width: int = 128
+    observation_height: int = 128
+    # None = 用机器人默认的归一化增量模式（pd_joint_target_delta_pos）。
+    # 在绝对关节角数据上训出来的策略要显式给 "pd_joint_pos"，见类文档。
+    control_mode: str | None = None
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/top": f"{OBS_IMAGES}.top",
+            "pixels/wrist": f"{OBS_IMAGES}.wrist",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            for camera in ("top", "wrist"):
+                self.features[f"pixels/{camera}"] = PolicyFeature(
+                    type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+                )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(6,))
+            for camera in ("top", "wrist"):
+                self.features[f"pixels/{camera}"] = PolicyFeature(
+                    type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+                )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def package_name(self) -> str:
+        return "so101_sim"
+
+    @property
+    def gym_id(self) -> str:
+        return "SO101Sim-v1"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "task": self.task,
+            "obs_type": self.obs_type,
+            "obs_mode": self.obs_mode,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+            "episode_length": self.episode_length,
+            "control_mode": self.control_mode,
+        }
+
+
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
