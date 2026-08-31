@@ -1,4 +1,4 @@
-> **这是 Xbotics 维护的 fork**（基线 `v0.5.1`，工作分支 `xbotics`）。
+> **这是 Xbotics 维护的 fork**（基线 `v0.5.1`，工作分支 `main`）。
 > 相对上游多了 VLA-0 与 OpenVLA 两个 policy、SO-101 仿真评测口，以及一个 groot 的 bugfix。
 > 详见 [**XBOTICS.md**](XBOTICS.md)。下面是上游原始 README。
 
