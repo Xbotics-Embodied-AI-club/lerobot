@@ -1,14 +1,14 @@
 # 这个 fork 加了什么
 
-Xbotics 维护的 lerobot 分支。**基线 `v0.5.1`**，工作分支 `xbotics`。
+Xbotics 维护的 lerobot 分支。**基线 `v0.5.1`**，工作分支 `main`。
 
 装它：
 
 ```bash
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics"
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@main"
 ```
 
-功能是**一起装的**，没有「挑几个」这回事 —— 下面四项在 `xbotics` 分支上一律可用。
+功能是**一起装的**，没有「挑几个」这回事 —— 下面四项在 `main` 分支上一律可用。
 
 ## 四项改动
 
