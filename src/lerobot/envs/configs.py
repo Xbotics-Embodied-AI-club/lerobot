@@ -396,10 +396,10 @@ class So101SimEnv(EnvConfig):
     走 make_env 的通用分支：import package_name（=so101_sim）触发注册，再
     gym.make(gym_id=SO101Sim-v1, **gym_kwargs)。
 
-    task 字段取仿真包注册的环境 id，三个分发场景（每个都是 top + wrist 双相机）：
-    SO101PickPlaceCube40-v1 / SO101PickPlaceCube20-v1 / SO101PickPlaceCylinder40-v1；
-    另有三个同名带 Train 后缀的孪生环境（...Cube40Train-v1 等）供 RL 训练用，
-    它们只改 reward 与步数预算，物理与分发场景逐位相同。
+    task 字段取仿真包注册的环境 id，就是那三个分发场景（每个都是 top + wrist 双相机）：
+    SO101PickPlaceCube40-v1 / SO101PickPlaceCube20-v1 / SO101PickPlaceCylinder40-v1。
+    一个场景一个环境，没有别的 id —— RL 训练要改 reward 或放宽步数走训练侧的包装器与
+    gym.make 的 max_episode_steps，不新注册环境。
 
     ★两个参数必须与「被评策略所训数据是怎么产生的」对齐，否则不报错、只会安静跑错：
 

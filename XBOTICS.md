@@ -29,8 +29,8 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
              --env.control_mode=pd_joint_pos --eval.n_episodes=20
 ```
 
-三个分发场景 `SO101PickPlace{Cube40,Cube20,Cylinder40}-v1` + 三个 `...Train-v1`
-RL 训练孪生。配套公开数据集
+三个分发场景 `SO101PickPlace{Cube40,Cube20,Cylinder40}-v1`，**这就是全部环境 id**
+（一个场景一个环境；RL 训练改 reward / 放宽步数走包装器与构造参数，不新注册）。配套公开数据集
 <https://huggingface.co/datasets/Harrysunshine/so101-sim-pickplace>。
 
 ### ⚠️ 评测口径必须与数据来源对齐
