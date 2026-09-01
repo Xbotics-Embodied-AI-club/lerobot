@@ -32,7 +32,6 @@ from lerobot.utils.constants import ACTION
 
 from .configuration_openvla import OpenVLAConfig
 
-
 _DTYPES: dict[str, torch.dtype] = {
     "float32": torch.float32,
     "float16": torch.float16,
@@ -121,7 +120,7 @@ def _patch_remote_tie_weights_for_transformers5(model: torch.nn.Module | type[to
         del args
         return tie_weights()
 
-    setattr(model, "tie_weights", _compatible_tie_weights)
+    model.tie_weights = _compatible_tie_weights
 
 
 def _is_transformers5_meta_init_error(exc: BaseException) -> bool:
@@ -283,7 +282,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
         return policy
 
     def _load_hf_openvla(self, model_id: str) -> tuple[Any, torch.nn.Module]:
-        AutoProcessor, AutoModelForOpenVLA = _resolve_transformers_openvla_auto_classes()
+        # noqa 的理由：这两个名字绑的是类对象而非变量，大写是 transformers 的 Auto* 约定；
+        # 改成小写会让读者以为它们是实例。
+        AutoProcessor, AutoModelForOpenVLA = _resolve_transformers_openvla_auto_classes()  # noqa: N806
         _patch_transformers_tokenization_utils_for_openvla()
         torch_dtype = _DTYPES.get(self.config.torch_dtype)
         if torch_dtype is None:
