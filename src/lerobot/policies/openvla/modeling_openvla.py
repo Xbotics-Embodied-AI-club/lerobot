@@ -1,3 +1,16 @@
+"""OpenVLA 原生 policy：把官方 remote code 接进 LeRobot 的 policy 接口。
+
+这个文件存在的理由是**官方实现与 LeRobot 的两处不兼容**，两处都不报错、只会安静
+跑错，所以必须在这一层拦住：
+
+- transformers>=5 把 `from_pretrained` 的初始化包在 `torch.device("meta")` 里，而
+  官方 remote code 在 `__init__` 里建 timm DINOv2 骨干、timm 构造时会调 `.item()`，
+  meta 张量上做不了。见 `_load_openvla_remote_model_without_meta_init`。
+- 动作反归一化用的是 checkpoint 自带的 norm_stats，拿别的动作量程训出来的策略会
+  输出超量程动作而无人知晓。见 `_maybe_inject_action_stats`。
+"""
+
+
 from __future__ import annotations
 
 import builtins
@@ -122,7 +135,7 @@ def _load_openvla_remote_model_without_meta_init(
     load_kwargs: dict[str, Any],
     torch_dtype: torch.dtype,
 ) -> torch.nn.Module:
-    """Load official OpenVLA remote code while avoiding transformers>=5 meta-device init.
+    """Load OpenVLA remote code without tripping transformers>=5 meta-device init.
 
     Transformers 5 wraps `from_pretrained` initialization in `torch.device("meta")`.
     Official OpenVLA remote code builds a timm DINOv2 backbone in `__init__`, and
@@ -514,10 +527,15 @@ class OpenVLAPolicy(PreTrainedPolicy):
         return int(getattr(hf_config, "n_action_bins", 256))
 
     def _maybe_inject_action_stats(self) -> None:
-        """Expose `config.action_stats` (custom training q01/q99) under `unnorm_key` in the model's
-        norm_stats, so the greedy-decode unnormalization uses the training stats. For the official
-        finetuned-libero checkpoint, `_action_stats` is empty and norm_stats already carries
-        `unnorm_key`, so nothing is injected."""
+        """Point the greedy decoder's unnormalization at our own training statistics.
+
+        Without this, decoding unnormalizes against whatever stats shipped with the
+        checkpoint, so a policy trained on different action ranges produces out-of-scale
+        actions and nothing reports it. `config.action_stats` (our q01/q99) is written
+        under `unnorm_key` in the model's norm_stats. The official finetuned-libero
+        checkpoint already carries `unnorm_key` and leaves `_action_stats` empty, so for
+        it nothing is injected.
+        """
         stats = self._action_stats
         key = self.config.unnorm_key
         nstats = getattr(self.model, "norm_stats", None)

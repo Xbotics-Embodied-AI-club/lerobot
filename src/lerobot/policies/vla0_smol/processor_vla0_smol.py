@@ -25,8 +25,7 @@ def make_vla0_smol_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for the VLA0-Smol policy.
+    """Build the pre- and post-processor pipelines for the VLA0-Smol policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations.

@@ -1,3 +1,11 @@
+"""VLA0-Smol 原生 policy：动作以文本形式生成，靠语法约束保住格式。
+
+与本仓其它 policy 最大的不同是动作**不是**从连续头回归出来的，而是从生成文本里读
+出来的整数序列。因此格式错就等于不可解析，而不是只是不准 —— `build_exact_n_numbers_grammar`
+用 EBNF 把整数个数钉死，就是为了这一条。
+"""
+
+
 #!/usr/bin/env python
 
 import logging
@@ -37,12 +45,13 @@ class VLA0SmolPolicy(PreTrainedPolicy):
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         **kwargs,
     ):
-        """
+        """Build the policy, optionally seeding the normalizer from dataset statistics.
+
         Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                    the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
+            config: Policy configuration; None falls back to the class default.
+            dataset_stats: Statistics for normalization. Omitting them here means they must
+                arrive via `load_state_dict` before the policy is used, otherwise the
+                normalizer has nothing to normalize against.
         """
 
         super().__init__(config)
@@ -81,11 +90,12 @@ class VLA0SmolPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
+        """Return one action per call, from whichever of two paths is configured.
 
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        The two paths buffer differently, and that difference is the reason this is not a
+        thin wrapper: with ensembling on, the model is queried every step and the chunk is
+        folded into `temporal_ensembler`, so there is no queue. With it off, a chunk is
+        generated only when `_action_queue` runs dry, and calls in between just pop from it.
         """
         self.eval()
 
@@ -117,8 +127,11 @@ class VLA0SmolPolicy(PreTrainedPolicy):
 
 
 def build_exact_n_numbers_grammar(n_numbers: int) -> str:
-    """
-    Constructs an EBNF grammar that enforces exactly `n_numbers` integers.
+    """Build an EBNF grammar that accepts exactly `n_numbers` integers, nothing else.
+
+    The grammar is what keeps decoding on-format: VLA0 reads the action off the generated
+    text, so a chunk with the wrong count of integers is unparseable rather than merely
+    inaccurate.
     """
     # integer ::= "-"? [0-9]+
     base_rules = """
@@ -136,11 +149,10 @@ def build_exact_n_numbers_grammar(n_numbers: int) -> str:
 
 class VLA0TemporalEnsembler:
     def __init__(self, ensemble_prediction_count: int) -> None:
-        """
-        Implements the specific ensembling logic used in VLA0 Libero evaluation.
+        """Average overlapping action chunks, as VLA0 does in its Libero evaluation.
 
         Args:
-            ensemble_prediction_count (int): Corresponds to ensemble_prediction param.
+            ensemble_prediction_count: Corresponds to the ensemble_prediction param.
                 This limits how many overlapping schedules are averaged.
         """
         self.max_schedules = ensemble_prediction_count
@@ -150,7 +162,8 @@ class VLA0TemporalEnsembler:
         self.schedules = deque(maxlen=self.max_schedules)
 
     def update(self, new_action_chunk: Tensor) -> Tensor:
-        """
+        """Push one chunk in and return the action averaged over all live schedules.
+
         Args:
             new_action_chunk: Tensor of shape (batch, horizon, action_dim).
                 Note: This implementation assumes batch_size=1 for simplicity
@@ -371,7 +384,7 @@ class VLA0(nn.Module):
         return prefix_out, loss_mask
 
     def prepare_images(self, batch: torch.Tensor):
-        """Preprocess LeRobot batch into inputs"""
+        """Preprocess a LeRobot batch into model inputs."""
         images = {}
         present_img_keys = [key for key in self.image_keys if key in batch]
         if len(present_img_keys) == 0:
