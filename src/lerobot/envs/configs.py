@@ -401,28 +401,33 @@ class So101SimEnv(EnvConfig):
     一个场景一个环境，没有别的 id —— RL 训练要改 reward 或放宽步数走训练侧的包装器与
     gym.make 的 max_episode_steps，不新注册环境。
 
-    ★两个参数必须与「被评策略所训数据是怎么产生的」对齐，否则不报错、只会安静跑错：
+    ★默认值一律对齐「已交付的 SO-101 数据集是怎么产生的」。这几项配错都不报错、
+    只会安静跑错，而四者的表现都是一个会被误读成「策略没学会」的低成功率：
 
-    - control_mode：已发布的 SO-101 仿真数据集录的是**绝对关节角**，要传
-      pd_joint_pos；不传则用机器人默认的归一化增量模式。把绝对角当增量喂进去，
-      每一维都会被 clip 到 ±1，手臂以最大速度朝错误方向走。
-    - episode_length：要装得下数据集里的轨迹长度。策略在完成动作之前被 TimeLimit
-      截断，评测端看不出来。
-
-    两种情况得到的都是一个低成功率，而它会被误读成「策略没学会」。
+    - joint_unit：已交付的仿真与真机数据集**一律度制**（真机舵机按度读写，仿真数据
+      产线落盘时换算过），而 ManiSkill 内部恒为弧度，差 57.3 倍。观测偏小 57.3 倍会
+      让归一化输出远离训练分布，动作偏大 57.3 倍会逐维顶到关节限位。默认 "deg"；
+      直接对着 ManiSkill 原生口径写的调用方传 "rad"。
+    - control_mode：数据集录的是**绝对关节角**，所以默认 pd_joint_pos。给 None 会
+      落到机器人默认的归一化增量模式，绝对角被逐维 clip 到 ±1，手臂以包线最大速度
+      朝错误方向走。
+    - observation_width / height：相机的竖直视野角是 ChArUco 在 **640×480** 下标定的
+      （fovy 59.17°），宽高比一变水平视野就跟着变。默认给标定分辨率，不要给正方形。
+    - episode_length：要装得下数据集里的轨迹长度（已交付数据最长 444 帧），默认 500。
+      截断发生在策略完成动作之前，而评测端看不出来。
+    - fps：仿真的 control_freq 与数据帧率都是 30。这一项影响评测录像的帧率。
     """
 
     task: str = "SO101PickPlaceCube40-v1"
-    fps: int = 20
-    episode_length: int = 400
+    fps: int = 30
+    episode_length: int = 500
     obs_type: str = "pixels_agent_pos"
     obs_mode: str = "rgb"
     render_mode: str = "rgb_array"
-    observation_width: int = 128
-    observation_height: int = 128
-    # None = 用机器人默认的归一化增量模式（pd_joint_target_delta_pos）。
-    # 在绝对关节角数据上训出来的策略要显式给 "pd_joint_pos"，见类文档。
-    control_mode: str | None = None
+    observation_width: int = 640
+    observation_height: int = 480
+    control_mode: str | None = "pd_joint_pos"
+    joint_unit: str = "deg"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
@@ -438,6 +443,8 @@ class So101SimEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        if self.joint_unit not in ("deg", "rad"):
+            raise ValueError(f"joint_unit 只能是 'deg' 或 'rad'，收到 {self.joint_unit!r}")
         if self.obs_type == "pixels":
             for camera in ("top", "wrist"):
                 self.features[f"pixels/{camera}"] = PolicyFeature(
@@ -471,6 +478,7 @@ class So101SimEnv(EnvConfig):
             "observation_height": self.observation_height,
             "episode_length": self.episode_length,
             "control_mode": self.control_mode,
+            "joint_unit": self.joint_unit,
         }
 
 

@@ -266,3 +266,70 @@ def test_make_env_from_hub_async():
 
     # clean up
     env.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# so101_sim 评测口的默认值契约
+#
+# 这几项配错都不报错、只表现为一个会被误读成「策略没学会」的低成功率，所以默认值
+# 必须与「已交付的 SO-101 数据集是怎么产生的」一致，且要有测试钉住 —— 曾经默认是
+# 20 fps / 128×128 / control_mode=None / 无单位换算，四项全与数据不符。
+# 本组测试只读配置、不建仿真，因此在没有 GPU 的机器上也能跑。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_so101_sim_defaults_match_delivered_datasets():
+    """默认值对齐已交付数据集：度制、绝对关节角、标定分辨率、装得下最长轨迹。"""
+    cfg = make_env_config("so101_sim")
+
+    assert cfg.joint_unit == "deg", "已交付数据集是度制，默认必须是 deg"
+    assert cfg.control_mode == "pd_joint_pos", "数据集录的是绝对关节角"
+    assert (cfg.observation_width, cfg.observation_height) == (640, 480), (
+        "相机的竖直视野角是在 640×480 下标定的，改宽高比会改水平视野"
+    )
+    assert cfg.fps == 30, "仿真 control_freq 与数据帧率都是 30"
+    assert cfg.episode_length >= 444, "已交付数据最长 444 帧，短了会静默截断"
+
+
+def test_so101_sim_gym_kwargs_carries_joint_unit():
+    """joint_unit 必须下发给仿真侧 —— 不在 gym_kwargs 里就等于这个参数不存在。"""
+    cfg = make_env_config("so101_sim", joint_unit="rad")
+
+    assert cfg.joint_unit == "rad"
+    assert cfg.gym_kwargs["joint_unit"] == "rad"
+    # 另外几项也要真的传下去，否则命令行改了也不生效。
+    for key in ("control_mode", "observation_width", "observation_height", "episode_length"):
+        assert key in cfg.gym_kwargs, f"{key} 没有下发给仿真侧"
+
+
+def test_so101_sim_rejects_unknown_joint_unit():
+    """非法单位要当场报错，而不是留到评测出一个低成功率再让人反推。"""
+    with pytest.raises(ValueError, match="joint_unit"):
+        make_env_config("so101_sim", joint_unit="degrees")
+
+
+def test_so101_sim_visual_feature_shape_follows_resolution():
+    """观测空间的形状要跟着分辨率走 —— 声明与实际分岔时没有任何一步会报错。"""
+    cfg = make_env_config("so101_sim", observation_width=320, observation_height=240)
+
+    for camera in ("top", "wrist"):
+        assert cfg.features[f"pixels/{camera}"].shape == (240, 320, 3)
+
+
+def test_make_env_config_covers_all_registered_types():
+    """`make_env_config` 认的名字必须与命令行（draccus 注册表）认的是同一套。
+
+    原先它是写死的 if/elif，只列 aloha / pusht / libero —— 于是 `--env.type=so101_sim`
+    在命令行能跑，而代码里 `make_env_config("so101_sim")` 报
+    "Policy type 'so101_sim' is not available"。两条路认的名字分岔，且报文把「环境」
+    说成了「策略」，排查时非常费时间。
+    """
+    for env_type in EnvConfig.get_known_choices():
+        cfg = make_env_config(env_type)
+        assert cfg.type == env_type, f"{env_type} 造出来的 type 是 {cfg.type}"
+
+
+def test_make_env_config_unknown_type_lists_known_ones():
+    """名字打错时要把可用名字列出来，而不是只说「不可用」。"""
+    with pytest.raises(ValueError, match="Known types"):
+        make_env_config("so101sim")      # 少一个下划线，最常见的手误
