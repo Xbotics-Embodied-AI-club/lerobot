@@ -25,7 +25,7 @@ from gymnasium.utils.env_checker import check_env
 
 import lerobot
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs.configs import EnvConfig, So101SimEnv
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
@@ -269,20 +269,22 @@ def test_make_env_from_hub_async():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# so101_sim 评测口的默认值契约
+# so101_sim 评测口的默认值契约（我们自有的 EnvConfig 子类，不涉上游代码）
 #
-# 这几项配错都不报错、只表现为一个会被误读成「策略没学会」的低成功率，所以默认值
-# 必须与「已交付的 SO-101 数据集是怎么产生的」一致，且要有测试钉住 —— 曾经默认是
-# 20 fps / 128×128 / control_mode=None / 无单位换算，四项全与数据不符。
-# 本组测试只读配置、不建仿真，因此在没有 GPU 的机器上也能跑。
+# 这几项配错都不报错、只表现为一个会被误读成「策略没学会」的低成功率，所以默认值必须
+# 与「已交付的 SO-101 数据集是怎么产生的」一致，且要有测试钉住 —— 曾经默认是 20 fps /
+# 128×128 / control_mode=None / 无口径换算，四项全与数据不符。
+#
+# 直接构造 So101SimEnv 而不经过 make_env_config：后者是**上游代码**，不动它。
+# 本组只读配置、不建仿真，因此在没有 GPU 的机器上也能跑。
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_so101_sim_defaults_match_delivered_datasets():
-    """默认值对齐已交付数据集：度制、绝对关节角、标定分辨率、装得下最长轨迹。"""
-    cfg = make_env_config("so101_sim")
+def test_so101_sim_defaults_match_real_robot():
+    """默认值对齐真机口径：臂关节度 + 夹爪百分比、绝对关节角、标定分辨率、装得下最长轨迹。"""
+    cfg = So101SimEnv()
 
-    assert cfg.joint_unit == "deg", "已交付数据集是度制，默认必须是 deg"
+    assert cfg.unit_convention == "real", "默认必须是真机口径（臂关节度、夹爪行程百分比）"
     assert cfg.control_mode == "pd_joint_pos", "数据集录的是绝对关节角"
     assert (cfg.observation_width, cfg.observation_height) == (640, 480), (
         "相机的竖直视野角是在 640×480 下标定的，改宽高比会改水平视野"
@@ -291,45 +293,54 @@ def test_so101_sim_defaults_match_delivered_datasets():
     assert cfg.episode_length >= 444, "已交付数据最长 444 帧，短了会静默截断"
 
 
-def test_so101_sim_gym_kwargs_carries_joint_unit():
-    """joint_unit 必须下发给仿真侧 —— 不在 gym_kwargs 里就等于这个参数不存在。"""
-    cfg = make_env_config("so101_sim", joint_unit="rad")
+def test_so101_sim_gym_kwargs_carries_unit_convention():
+    """口径必须下发给仿真侧 —— 不在 gym_kwargs 里就等于这个参数不存在。"""
+    cfg = So101SimEnv(unit_convention="maniskill")
 
-    assert cfg.joint_unit == "rad"
-    assert cfg.gym_kwargs["joint_unit"] == "rad"
-    # 另外几项也要真的传下去，否则命令行改了也不生效。
+    assert cfg.gym_kwargs["unit_convention"] == "maniskill"
     for key in ("control_mode", "observation_width", "observation_height", "episode_length"):
         assert key in cfg.gym_kwargs, f"{key} 没有下发给仿真侧"
 
 
-def test_so101_sim_rejects_unknown_joint_unit():
-    """非法单位要当场报错，而不是留到评测出一个低成功率再让人反推。"""
-    with pytest.raises(ValueError, match="joint_unit"):
-        make_env_config("so101_sim", joint_unit="degrees")
+def test_so101_sim_rejects_unknown_unit_convention():
+    """非法口径要当场报错，而不是留到评测出一个低成功率再让人反推。"""
+    with pytest.raises(ValueError, match="unit_convention"):
+        So101SimEnv(unit_convention="deg")
 
 
 def test_so101_sim_visual_feature_shape_follows_resolution():
     """观测空间的形状要跟着分辨率走 —— 声明与实际分岔时没有任何一步会报错。"""
-    cfg = make_env_config("so101_sim", observation_width=320, observation_height=240)
+    cfg = So101SimEnv(observation_width=320, observation_height=240)
 
     for camera in ("top", "wrist"):
         assert cfg.features[f"pixels/{camera}"].shape == (240, 320, 3)
 
 
-def test_make_env_config_covers_all_registered_types():
-    """`make_env_config` 认的名字必须与命令行（draccus 注册表）认的是同一套。
-
-    原先它是写死的 if/elif，只列 aloha / pusht / libero —— 于是 `--env.type=so101_sim`
-    在命令行能跑，而代码里 `make_env_config("so101_sim")` 报
-    "Policy type 'so101_sim' is not available"。两条路认的名字分岔，且报文把「环境」
-    说成了「策略」，排查时非常费时间。
-    """
-    for env_type in EnvConfig.get_known_choices():
-        cfg = make_env_config(env_type)
-        assert cfg.type == env_type, f"{env_type} 造出来的 type 是 {cfg.type}"
+# ─────────────────────────────────────────────────────────────────────────────
+# 追加注册的契约：新类型能造出来，且上游已有行为**逐字未变**
+#
+# 规则是「加注册可以，改行为不行」。所以这里既要证明 so101_sim 能造，
+# 也要证明上游那三个分支与 else 的报文没被动过 —— 后者是本组测试真正的价值：
+# 一旦有人把 if/elif 改写成注册表查表，报文与可接受的类型集就都变了，
+# 而那种改写在功能上「看起来更好」，正是最容易被放行的一类越界。
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_make_env_config_unknown_type_lists_known_ones():
-    """名字打错时要把可用名字列出来，而不是只说「不可用」。"""
-    with pytest.raises(ValueError, match="Known types"):
-        make_env_config("so101sim")      # 少一个下划线，最常见的手误
+def test_make_env_config_builds_so101_sim():
+    """我们追加的注册能造出对应配置。"""
+    cfg = make_env_config("so101_sim")
+
+    assert cfg.type == "so101_sim"
+    assert isinstance(cfg, So101SimEnv)
+
+
+@pytest.mark.parametrize("env_type", ["aloha", "pusht", "libero"])
+def test_make_env_config_upstream_branches_unchanged(env_type):
+    """上游原有的三个分支照旧可用。"""
+    assert make_env_config(env_type).type == env_type
+
+
+def test_make_env_config_unknown_type_keeps_upstream_message():
+    """未注册类型的报文必须与上游逐字相同 —— 改报文也是改行为。"""
+    with pytest.raises(ValueError, match=r"^Policy type 'nope' is not available\.$"):
+        make_env_config("nope")

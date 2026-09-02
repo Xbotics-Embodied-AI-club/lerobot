@@ -404,10 +404,13 @@ class So101SimEnv(EnvConfig):
     ★默认值一律对齐「已交付的 SO-101 数据集是怎么产生的」。这几项配错都不报错、
     只会安静跑错，而四者的表现都是一个会被误读成「策略没学会」的低成功率：
 
-    - joint_unit：已交付的仿真与真机数据集**一律度制**（真机舵机按度读写，仿真数据
-      产线落盘时换算过），而 ManiSkill 内部恒为弧度，差 57.3 倍。观测偏小 57.3 倍会
-      让归一化输出远离训练分布，动作偏大 57.3 倍会逐维顶到关节限位。默认 "deg"；
-      直接对着 ManiSkill 原生口径写的调用方传 "rad"。
+    - unit_convention：真机（`lerobot-record` 走 `so_follower`）的口径是**混的** ——
+      五个臂关节是度，**夹爪是 0~100 的行程百分比**（`so_follower` 把 gripper 写死为
+      `MotorNormMode.RANGE_0_100`，与 `use_degrees` 无关）。而 ManiSkill 内部恒为弧度。
+      所以「统一到真机」不是一个单位换算，是逐通道换算。默认 "real"；直接对着
+      ManiSkill 原生口径写的调用方传 "maniskill"。
+      臂关节配错差 57.3 倍；夹爪那一维更隐蔽 —— 度数与百分比的量级恰好撞车
+      （物理行程约 0~100 度），看数值看不出来，只表现为抓取这一环学不动。
     - control_mode：数据集录的是**绝对关节角**，所以默认 pd_joint_pos。给 None 会
       落到机器人默认的归一化增量模式，绝对角被逐维 clip 到 ±1，手臂以包线最大速度
       朝错误方向走。
@@ -427,7 +430,7 @@ class So101SimEnv(EnvConfig):
     observation_width: int = 640
     observation_height: int = 480
     control_mode: str | None = "pd_joint_pos"
-    joint_unit: str = "deg"
+    unit_convention: str = "real"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
@@ -443,8 +446,10 @@ class So101SimEnv(EnvConfig):
     )
 
     def __post_init__(self):
-        if self.joint_unit not in ("deg", "rad"):
-            raise ValueError(f"joint_unit 只能是 'deg' 或 'rad'，收到 {self.joint_unit!r}")
+        if self.unit_convention not in ("real", "maniskill"):
+            raise ValueError(
+                f"unit_convention 只能是 'real' 或 'maniskill'，收到 {self.unit_convention!r}"
+            )
         if self.obs_type == "pixels":
             for camera in ("top", "wrist"):
                 self.features[f"pixels/{camera}"] = PolicyFeature(
@@ -478,7 +483,7 @@ class So101SimEnv(EnvConfig):
             "observation_height": self.observation_height,
             "episode_length": self.episode_length,
             "control_mode": self.control_mode,
-            "joint_unit": self.joint_unit,
+            "unit_convention": self.unit_convention,
         }
 
 

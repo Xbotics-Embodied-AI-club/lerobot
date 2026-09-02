@@ -20,7 +20,15 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv
+from lerobot.envs.configs import (
+    AlohaEnv,
+    EnvConfig,
+    HubEnvConfig,
+    IsaaclabArenaEnv,
+    LiberoEnv,
+    PushtEnv,
+    So101SimEnv,
+)
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
@@ -29,31 +37,17 @@ from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
-    """按 `--env.type` 的名字造一个环境配置。
-
-    走 `EnvConfig` 的 draccus 注册表，而不是逐个列 if/elif —— 命令行那条路
-    （draccus 解析 ChoiceRegistry）本来就认所有 `@EnvConfig.register_subclass`
-    注册过的名字，而这个函数原先只列了 aloha / pusht / libero，于是
-    `so101_sim` / `metaworld` / `isaaclab_arena` 在这里造不出来，
-    报的还是 "Policy type ... not available"（连"环境"都说错了）。
-    两条路认的名字必须是同一套，否则命令行能跑而代码里调不出来。
-
-    Args:
-        env_type: 注册名，例如 "aloha" / "so101_sim"。
-        **kwargs: 传给对应配置类的字段。
-
-    Returns:
-        对应的 `EnvConfig` 子类实例。
-
-    Raises:
-        ValueError: 名字没注册过；报文里列出所有可用名字。
-    """
-    known = EnvConfig.get_known_choices()
-    if env_type not in known:
-        raise ValueError(
-            f"Environment type '{env_type}' is not available. Known types: {sorted(known)}"
-        )
-    return EnvConfig.get_choice_class(env_type)(**kwargs)
+    if env_type == "aloha":
+        return AlohaEnv(**kwargs)
+    elif env_type == "pusht":
+        return PushtEnv(**kwargs)
+    elif env_type == "libero":
+        return LiberoEnv(**kwargs)
+    # ↓ Xbotics 追加的注册。只加分支，不改上游任何已有行为（含 else 的报文）。
+    elif env_type == "so101_sim":
+        return So101SimEnv(**kwargs)
+    else:
+        raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
 def make_env_pre_post_processors(
