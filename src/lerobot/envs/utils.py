@@ -153,35 +153,39 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
             )
 
 
+def _call_env_attr(env: gym.vector.VectorEnv, name: str) -> list[str] | None:
+    """Read a per-sub-env string attribute, or None if the envs don't expose it.
+
+    ``hasattr(env.envs[0], name)`` is NOT a usable gate. ``gym.make`` returns the env
+    wrapped (``OrderEnforcing``, ``PassiveEnvChecker``, ``TimeLimit`` …), and from
+    gymnasium 1.x a ``Wrapper`` no longer forwards unknown attributes to the inner env.
+    So the gate is False even when the attribute exists, and the caller silently falls
+    back to an empty instruction. ``env.call`` goes through the vector API and does
+    reach the inner env, so ask it and catch the failure instead of guessing.
+    """
+    try:
+        result = env.call(name)
+    except (AttributeError, ValueError, NotImplementedError):
+        return None
+    if isinstance(result, tuple):
+        result = list(result)
+    if not isinstance(result, list):
+        raise TypeError(f"Expected {name} to return a list, got {type(result)}")
+    if not all(isinstance(item, str) for item in result):
+        raise TypeError(f"All items in {name} result must be strings")
+    return result
+
+
 def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if hasattr(env.envs[0], "task_description"):
-        task_result = env.call("task_description")
-
-        if isinstance(task_result, tuple):
-            task_result = list(task_result)
-
-        if not isinstance(task_result, list):
-            raise TypeError(f"Expected task_description to return a list, got {type(task_result)}")
-        if not all(isinstance(item, str) for item in task_result):
-            raise TypeError("All items in task_description result must be strings")
-
-        observation["task"] = task_result
-    elif hasattr(env.envs[0], "task"):
-        task_result = env.call("task")
-
-        if isinstance(task_result, tuple):
-            task_result = list(task_result)
-
-        if not isinstance(task_result, list):
-            raise TypeError(f"Expected task to return a list, got {type(task_result)}")
-        if not all(isinstance(item, str) for item in task_result):
-            raise TypeError("All items in task result must be strings")
-
-        observation["task"] = task_result
-    else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
+    task_result = _call_env_attr(env, "task_description")
+    if task_result is None:
+        task_result = _call_env_attr(env, "task")
+    if task_result is None:
+        #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
-        observation["task"] = ["" for _ in range(num_envs)]
+        task_result = ["" for _ in range(num_envs)]
+    observation["task"] = task_result
     return observation
 
 
