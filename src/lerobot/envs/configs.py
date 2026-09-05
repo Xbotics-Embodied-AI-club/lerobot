@@ -422,6 +422,10 @@ class So101SimEnv(EnvConfig):
     """
 
     task: str = "SO101PickPlaceCube40-v1"
+    # 喂给策略的那句自然语言指令。`None` 表示由仿真器按场景查它自己那张表
+    # （`so101_sim.lerobot_env.TASK_INSTRUCTION`），取值与数据集 tasks.parquet 逐字相同。
+    # 显式给它主要是为了做对照：同一份权重、同一个仿真器，只换这一个字符串。
+    task_description: str | None = None
     fps: int = 30
     episode_length: int = 500
     obs_type: str = "pixels_agent_pos"
@@ -476,6 +480,7 @@ class So101SimEnv(EnvConfig):
     def gym_kwargs(self) -> dict:
         return {
             "task": self.task,
+            "task_description": self.task_description,
             "obs_type": self.obs_type,
             "obs_mode": self.obs_mode,
             "render_mode": self.render_mode,
