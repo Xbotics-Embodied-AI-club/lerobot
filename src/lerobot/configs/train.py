@@ -119,7 +119,18 @@ class TrainPipelineConfig(HubMixin):
             else:
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
+        # Only the main process may enforce "output dir must not exist".
+        #
+        # validate() runs BEFORE the Accelerator exists, so under `accelerate launch` all
+        # ranks execute it concurrently. Whichever rank initialises wandb first creates
+        # output_dir/wandb, and the ranks that reach this check afterwards see a directory
+        # that their own run just made — they abort with FileExistsError and take the whole
+        # job down. Observed on a 6-process run: dir created at 00:56:46, two ranks raised
+        # at 00:56:49, on a directory that had been freshly removed before launch.
+        #
+        # LOCAL_RANK is set by torchrun/accelerate; absent means single-process.
+        is_main = os.environ.get("LOCAL_RANK", "0") == "0"
+        if is_main and not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
                 f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."
