@@ -61,7 +61,13 @@ dependencies = [
 
     # Hugging Face dependencies
     "datasets>=4.0.0,<5.0.0",
-    "diffusers>=0.27.2,<0.36.0",
+    # 上界放开到 0.41：0.35 的 torchao quantizer 有个 import 期就炸的 bug ——
+    # `logger` 在第 110 行才定义，却在第 92/95 行的 except 分支里被调用，于是
+    # torchao>=0.16 让那几个 `torchao.dtypes.uintx.*` import 失败时，本该只是一条
+    # warning 的地方抛 NameError。0.36 仍有此问题，**0.40 已修**（logger 提到文件开头）。
+    # 而 torchao 必须能提到 >=0.16：peft 的 LoRA dispatcher 遇 torchao<0.16 直接抛
+    # ImportError，不提就用不了 LoRA。⇒ 这个上界是 LoRA 那条线的前置条件。
+    "diffusers>=0.40.0,<0.41.0",
     "huggingface-hub>=1.0.0,<2.0.0",
     "accelerate>=1.10.0,<2.0.0",
 
