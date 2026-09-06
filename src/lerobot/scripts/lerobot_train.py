@@ -241,13 +241,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
+        peft_trainable=True,
     )
 
     if cfg.peft is not None:
-        logging.info("Using PEFT! Wrapping model.")
-        # Convert CLI peft config to dict for overrides
-        peft_cli_overrides = dataclasses.asdict(cfg.peft)
-        policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
+        # 续训一个 PEFT 跑：适配器已经由 make_policy 从检查点里装回来了，这里再包一层
+        # 会得到嵌套适配器 —— 新的那层按原 target_modules 正则匹配不到任何模块，
+        # 于是训练的是一组刚初始化的空适配器，而看起来一切正常。
+        from peft import PeftModel
+
+        if isinstance(policy, PeftModel):
+            logging.info("Resuming a PEFT run: adapter restored from the checkpoint, not re-wrapping.")
+        else:
+            logging.info("Using PEFT! Wrapping model.")
+            # Convert CLI peft config to dict for overrides
+            peft_cli_overrides = dataclasses.asdict(cfg.peft)
+            policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()

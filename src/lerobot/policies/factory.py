@@ -469,6 +469,7 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
     rename_map: dict[str, str] | None = None,
+    peft_trainable: bool = False,
 ) -> PreTrainedPolicy:
     """
     Instantiate a policy model.
@@ -579,7 +580,12 @@ def make_policy(
             )
 
         policy = policy_cls.from_pretrained(**kwargs)
-        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+        # `is_trainable` 默认 False —— PEFT 会把适配器整个冻掉。推理时这是对的，
+        # **续训时不是**：冻掉之后优化器拿到一个空参数表，training loop 照样跑，
+        # 只是一步也不更新。所以续训那一侧必须显式传 True（见 lerobot_train.py）。
+        policy = PeftModel.from_pretrained(
+            policy, peft_pretrained_path, config=peft_config, is_trainable=peft_trainable
+        )
 
     else:
         # Make a fresh policy.
