@@ -13,7 +13,6 @@ import random
 from collections import deque
 
 import torch
-import xgrammar as xgr
 from torch import Tensor, nn
 from torch.profiler import record_function
 from torchvision.transforms import CenterCrop, RandomCrop
@@ -238,6 +237,10 @@ class VLA0(nn.Module):
         self.processor.tokenizer.add_tokens([self.actions_mask_symbol], special_tokens=True)
         self.vlm.resize_token_embeddings(len(self.processor.tokenizer), mean_resizing=False)
         self.mask_token_id = self.processor.tokenizer.convert_tokens_to_ids(self.actions_mask_symbol)
+
+        # xgrammar 只有这个 policy 用、不在 LeRobot 的依赖里：用到时才导入。放在文件顶层的话，
+        # 策略工厂导入本包的配置就会连带要求它，没装 xgrammar 的环境里连 policy_server 都起不来。
+        import xgrammar as xgr
 
         tokenizer_info = xgr.TokenizerInfo.from_huggingface(self.processor.tokenizer)
         self.grammar_compiler = xgr.GrammarCompiler(tokenizer_info)
@@ -466,6 +469,8 @@ class VLA0(nn.Module):
         input_len = padded_outs["input_ids"].shape[1]
 
         # initialize grammar
+        import xgrammar as xgr
+
         xgr_logits_processor = xgr.contrib.hf.LogitsProcessor(self.compiled_grammar)
 
         # Model inference on GPU (no gradient)
