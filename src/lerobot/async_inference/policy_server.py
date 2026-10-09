@@ -25,6 +25,7 @@ python -m lerobot.async_inference.policy_server \
 """
 
 import logging
+import pathlib
 import pickle  # nosec
 import threading
 import time
@@ -38,6 +39,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -46,6 +48,8 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.import_utils import register_third_party_plugins
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -59,6 +63,17 @@ from .helpers import (
     observations_similar,
     raw_observation_to_observation,
 )
+
+
+def _is_plugin_policy(policy_type: str) -> bool:
+    """这个策略类型是不是第三方插件（`lerobot_policy_*` 包）登记的，而不是 LeRobot 自带的。
+
+    `SUPPORTED_POLICIES` 只列了自带的、在远程推理上验证过的几种；插件策略由插件自己负责，
+    server 只要能按名字找到它就放行。
+    """
+    if policy_type not in PreTrainedConfig.get_known_choices():
+        return False
+    return not PreTrainedConfig.get_choice_class(policy_type).__module__.startswith("lerobot.")
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
@@ -127,10 +142,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
 
-        if policy_specs.policy_type not in SUPPORTED_POLICIES:
+        if policy_specs.policy_type not in SUPPORTED_POLICIES and not _is_plugin_policy(
+            policy_specs.policy_type
+        ):
             raise ValueError(
                 f"Policy type {policy_specs.policy_type} not supported. "
-                f"Supported policies: {SUPPORTED_POLICIES}"
+                f"Supported policies: {SUPPORTED_POLICIES}, plus any policy registered by an installed "
+                "lerobot_policy_* plugin"
             )
 
         self.logger.info(
@@ -152,17 +170,24 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
 
-        # Load preprocessor and postprocessor, overriding device to match requested device
-        device_override = {"device": self.device}
-        self.preprocessor, self.postprocessor = make_pre_post_processors(
-            self.policy.config,
-            pretrained_path=policy_specs.pretrained_name_or_path,
-            preprocessor_overrides={
-                "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-            },
-            postprocessor_overrides={"device_processor": device_override},
+        saved_processors = pathlib.Path(
+            policy_specs.pretrained_name_or_path, f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
         )
+        if _is_plugin_policy(self.policy_type) and not saved_processors.is_file():
+            # 插件策略的权重不一定是 LeRobot 训出来的，目录里没有保存的前后处理流水；按策略配置现建。
+            self.preprocessor, self.postprocessor = make_pre_post_processors(self.policy.config)
+        else:
+            # Load preprocessor and postprocessor, overriding device to match requested device
+            device_override = {"device": self.device}
+            self.preprocessor, self.postprocessor = make_pre_post_processors(
+                self.policy.config,
+                pretrained_path=policy_specs.pretrained_name_or_path,
+                preprocessor_overrides={
+                    "device_processor": device_override,
+                    "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+                },
+                postprocessor_overrides={"device_processor": device_override},
+            )
 
         end = time.perf_counter()
 
@@ -418,6 +443,9 @@ def serve(cfg: PolicyServerConfig):
         config: PolicyServerConfig instance. If None, uses default configuration.
     """
     logging.info(pformat(asdict(cfg)))
+
+    # 插件策略要先导入、在 PreTrainedConfig 里登记上，client 发来它的名字时才找得到（client 侧早已这样做）。
+    register_third_party_plugins()
 
     # Create the server instance first
     policy_server = PolicyServer(cfg)
