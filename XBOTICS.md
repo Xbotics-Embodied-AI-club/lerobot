@@ -7,7 +7,7 @@ Xbotics 维护的 lerobot 分支。这里是 **0.6 线：基线 `v0.6.1`，分�
 | 线 | 分支 | 标签 | 基线 | 谁在用 |
 |---|---|---|---|---|
 | 0.5 线 | `main` | `xbotics-v0.5.1.post1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
-| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1.post1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1.post2` | 上游 `v0.6.1` | 新项目、星禾套件板子；工作坊之后升到这条线 |
 
 ```bash
 # 克隆：-b 选线（分支跟着修，标签钉死不动）
@@ -15,12 +15,12 @@ git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git
 git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
 
 # 当依赖装（uv 项目的 pyproject.toml 里写；要复现就钉标签）
-#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1.post1" }
+#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1.post2" }
 #   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.5.1.post1" }
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1.post1"
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1.post2"
 ```
 
-标签只增不改：`.post1` 是在 `xbotics-v0.5.1` / `xbotics-v0.6.1` 之后加了远程推理 JPEG 上传（及 0.6 线一处评测修复）的版本，旧标签原样保留。
+标签只增不改，旧标签原样保留：`.post1` 加了远程推理 JPEG 上传（及 0.6 线一处评测修复）；0.6 线的 `.post2` 再加接臂板子上录数据的三项（瑞芯微硬件编码、统计抽样、网页预览，见下）。
 
 功能是**一起装的**，没有「挑几个」这回事 —— 下面几项在本分支上一律可用。
 
@@ -34,6 +34,8 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(async_inference)` | **policy_server 接受第三方插件策略**（`lerobot_policy_*`）。上游 0.6.1 的 policy_server 仍只认一张固定白名单。 |
 | `fix(envs)` | **异步评测环境找不到 so101_sim**。0.6 的 `lerobot-eval` 默认开异步环境、子进程用 forkserver 起，子进程里没有父进程 import 出来的环境注册，`--env.type=so101_sim` 一启动就 `NameNotFound`；现在子进程里补导一次。 |
 | `feat(async_inference)` | **观测压 JPEG + 后台发送**，见下「远程推理」。 |
+| `feat(datasets)` | **瑞芯微 MPP 硬件编码**（`h264_rkmpp`）与**边录边编的统计抽样**（`stats_every`），见下「接臂板子录数据」。 |
+| `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -59,6 +61,29 @@ PEFT 续训适配器被冻与重复包装（上游两处都修了）。
 | JPEG + 后台发，上行限 5 Mbps | 29.5 Hz | 44 ms | 1.0 Mbps |
 
 ⚠️ 新服务端收得了老客户端发的原图；新客户端（默认发 JPEG）连老服务端不行 —— 板子与服务端一起升级。
+
+## 接臂板子录数据：硬件编码、统计抽样、网页预览（板子上默认生效）
+
+在 RK3566 这类板子上，上游的录数据有三处跟不上：软件 AV1 编码约 11 fps；边录边编时逐帧算图像统计，每路每帧约 15 ms；
+`--display_data` 要拉起原生 rerun 查看器，而板子不开桌面、学员手里只有浏览器。本分支在板子上自动改掉这三处，命令不用加参数：
+
+| 项 | 板子上的默认 | 其他机器 | 开关 |
+|---|---|---|---|
+| 视频编码 | 默认的 libsvtav1（以及 `auto`）自动换成芯片自带的 MPP 硬件 H.264（`h264_rkmpp`，经 GStreamer，带 `GST_MPP_NO_RGA=1`） | 不变 | `LEROBOT_RKMPP=0` 关掉切换；也可显式 `--dataset.rgb_encoder.vcodec=...` |
+| 图像统计 | 边录边编时每 10 帧算一次（前两帧总算） | 逐帧（不变） | `--dataset.rgb_encoder.stats_every=N` |
+| 预览 | `--display_data=true` 且没有桌面时，板子自己出网页：浏览器打开 `http://<板子>:9090`（只敲这个短地址） | 有桌面时仍是原生 rerun | `--display_mode=web` 显式指定；`LEROBOT_WEB_PREVIEW_HZ`（默认 10）、`LEROBOT_WEB_PREVIEW_PORT`（默认 9090） |
+
+实测（RK3566 4 GB，两路 640×480 MJPG 相机，`lerobot-record` 40 s，`--dataset.streaming_encoding=true --display_data=true`，
+不加任何板子专用参数）：自动选中 MPP、预览自动改为网页，录下 1152 帧，平均 28.8 fps，读回正常，图像统计正常；
+网页预览 10 次/秒，电脑上只开 Firefox、只敲短地址即出两路画面与关节曲线。
+
+- MPP 判定：ARM + `/proc/device-tree/compatible` 含 rockchip + 装了 `gst-launch-1.0` 与 GStreamer 的 `mpph264enc` 插件；
+  板子上装 `gstreamer1.0-tools` 与瑞芯微的 GStreamer 插件包即可。
+- `GST_MPP_NO_RGA=1` 不能省：插件默认借 RGA 搬帧，板子有一段物理内存在 4 GB 以上，RGA 碰到就写坏内存、整机挂死。
+- 每 10 帧一次的统计与逐帧相比：均值差 ≤0.00025、q99 差 ≤0.012。
+- 网页预览要两件事才能只靠浏览器：9090 是跳转页（按浏览器访问板子用的主机名拼出数据地址，跳到 9091 的查看器）；
+  rerun 0.3x 的数据服务默认只放行 localhost 页面的跨源请求，这里放行查看器端口。推送在子进程里，不拖录制。
+- 录数据建议加 `--dataset.streaming_encoding=true`（边录边编，存盘几乎不用等）；不加时画面先存 PNG、每段结束再用 MPP 编。
 
 ## 仿真器是独立仓
 
@@ -113,7 +138,7 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
 
 仿真依赖带了平台标记 —— mani-skill 的物理后端 `sapien` 不发 aarch64 轮子，板端不跑仿真，安装不受影响。
 板端只做舵机、相机、录数据与远程推理客户端，0.6 线要装 **`lerobot[feetech,async,dataset,viz]`**
-（0.6 起 datasets 与 rerun 都不在核心依赖里了）。另有两处要在板子自己的环境里处理：
+（0.6 起 datasets 与 rerun 都不在核心依赖里了）。硬件编码、统计抽样、网页预览三项自动生效（见上一节）。另有几处要在板子自己的环境里处理：
 
 - **torch**：上游 aarch64 轮子从 2.10 起在 ARMv8.0 核（A53 / A72）上一导入就 `Illegal instruction`；
   这类板子钉 `torch==2.9.1`。A55（RK3566，ARMv8.2）上 2.10 实测可用。
@@ -143,10 +168,10 @@ BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robot
 | torch（锁文件） | 2.10 | 2.11（ARMv8.0 板子见上一节） |
 
 没变的：机器人 / 相机 / 第三方插件的注册方式；`robot_client` 与 `policy_server` 的命令行参数
-（工作坊那组实测两条线通用）；边录边编的逐帧统计（0.6 线仍是每帧都算，弱 CPU 板子上照旧是瓶颈）。
+（工作坊那组实测两条线通用）。边录边编的统计在 0.6 线 `.post2` 起按平台抽样（板子每 10 帧，其余逐帧），0.5 线仍逐帧。
 
 ⚠️ **板子与推理服务端必须用同一条线、同一个标签**：两端经 gRPC 互传 pickle 后的 LeRobot 对象，
-0.5 客户端连 0.6 服务端（或反过来）没有验证过；JPEG 上传也要两端都是 `.post1` 及以后。
+0.5 客户端连 0.6 服务端（或反过来）没有验证过；JPEG 上传也要两端都是 `.post1` 及以后（工作坊升级时两端一起换到 `xbotics-v0.6.1.post2`）。
 
 ## 跟上游的关系
 
