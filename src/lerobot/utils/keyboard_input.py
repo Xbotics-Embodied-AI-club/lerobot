@@ -46,6 +46,7 @@ import threading
 import time
 from collections.abc import Callable
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .import_utils import _pynput_available
@@ -76,17 +77,44 @@ if _pynput_available:
         logger.info("Could not import pynput keyboard backend: %s", e)
 
 
+# Xbotics: where a local X server puts its socket (``:N`` listens on ``X11_SOCKET_DIR/XN``).
+X11_SOCKET_DIR = Path("/tmp/.X11-unix")
+
+
+def _x11_display_running(display: str) -> bool:
+    """Xbotics: a local X display (``:0``, ``unix:0``) counts only if its server socket exists.
+
+    Some board images export ``DISPLAY=:0`` in every login shell even with the desktop
+    disabled (a browser terminal such as ttyd is a login shell). A remote display
+    (``localhost:10.0`` from SSH forwarding) has no local socket and is trusted as is.
+    """
+    host, _, number = display.rpartition(":")
+    if host not in ("", "unix"):
+        return True
+    return (X11_SOCKET_DIR / f"X{number.split('.', 1)[0]}").exists()
+
+
+def _wayland_display_running(name: str) -> bool:
+    """Xbotics: ``WAYLAND_DISPLAY`` counts only if its socket exists (relative to ``XDG_RUNTIME_DIR``)."""
+    return (Path(os.environ.get("XDG_RUNTIME_DIR", "")) / name).exists()
+
+
 @cache
 def is_headless() -> bool:
     """Return ``True`` when no display server is available.
 
-    * Linux: headless when neither ``DISPLAY`` (X11) nor ``WAYLAND_DISPLAY`` is set.
+    * Linux: headless unless ``DISPLAY`` (X11) or ``WAYLAND_DISPLAY`` names a server that is
+      actually running (Xbotics: a set variable alone is not enough, see :func:`_x11_display_running`).
     * macOS / Windows: a display is always assumed to be present. A genuinely GUI-less
     Mac/Windows CI host would be misclassified but it doesn't matter, because the
     sys.stdin.isatty() gate returns None there regardless.
     """
     if platform.system() == "Linux":
-        return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        display = os.environ.get("DISPLAY")
+        wayland = os.environ.get("WAYLAND_DISPLAY")
+        return not (
+            (display and _x11_display_running(display)) or (wayland and _wayland_display_running(wayland))
+        )
     return False
 
 

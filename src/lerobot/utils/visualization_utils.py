@@ -22,11 +22,11 @@ this module does not import ``rerun`` or ``foxglove`` (each backend imports its 
 """
 
 import logging
-import os
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 
 from .foxglove_visualization import init_foxglove, log_foxglove_data, shutdown_foxglove
+from .keyboard_input import is_headless
 from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun
 from .rerun_web_visualization import init_rerun_web, log_rerun_web_data, shutdown_rerun_web
 
@@ -40,7 +40,9 @@ _web_override = False
 
 
 def _has_desktop() -> bool:
-    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    # 与录制时的按键监听用同一个判断：只设了 DISPLAY 不算，X 服务得真在跑（有的板子镜像在登录 shell
+    # 里写死 DISPLAY=:0，桌面关了也照设；当成有桌面会去拉原生查看器，拉不起来时 rerun 把每帧原图攒在内存里）
+    return not is_headless()
 
 
 def _resolve(display_mode: str) -> str:

@@ -9,7 +9,7 @@ import inspect
 import numpy as np
 import pytest
 
-from lerobot.utils import rerun_web_visualization as web, visualization_utils as vu
+from lerobot.utils import keyboard_input as ki, rerun_web_visualization as web, visualization_utils as vu
 
 
 def test_web_is_a_visualization_mode():
@@ -63,7 +63,11 @@ def test_offer_copies_images_and_flattens_scalars():
 
 
 @pytest.fixture
-def backends(monkeypatch):
+def backends(monkeypatch, tmp_path):
+    # 「有桌面」按 X 服务的 socket 判：这里只有 :0 在跑
+    (tmp_path / "X0").touch()
+    monkeypatch.setattr(ki, "X11_SOCKET_DIR", tmp_path)
+    ki.is_headless.cache_clear()
     calls = []
     for name in (
         "init_rerun",
@@ -76,6 +80,7 @@ def backends(monkeypatch):
         monkeypatch.setattr(vu, name, lambda *a, _n=name, **k: calls.append(_n))
     yield calls
     vu._web_override = False
+    ki.is_headless.cache_clear()
 
 
 def test_rerun_without_a_desktop_becomes_web(backends, monkeypatch):
@@ -92,6 +97,17 @@ def test_rerun_with_a_desktop_stays_native(backends, monkeypatch):
     vu.init_visualization("rerun")
     vu.log_visualization_data("rerun", observation={})
     assert backends == ["init_rerun", "log_rerun_data"]
+
+
+def test_display_set_but_no_x_server_becomes_web(backends, monkeypatch):
+    """板子镜像在登录 shell 里写死 DISPLAY=:0，桌面关了也照设；网页终端是登录 shell。
+
+    当成有桌面会去拉原生查看器，拉不起来时 rerun 把每帧原图攒在内存里，几十秒就把 4 GB 的板子吃光。
+    """
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    vu.init_visualization("rerun")
+    assert backends == ["init_rerun_web"]
 
 
 def test_remote_rerun_server_is_respected_without_a_desktop(backends, monkeypatch):

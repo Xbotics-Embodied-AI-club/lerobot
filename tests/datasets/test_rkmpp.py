@@ -5,6 +5,7 @@
 """
 
 import queue
+import subprocess
 import threading
 
 import numpy as np
@@ -114,6 +115,22 @@ def test_gst_command_and_env():
     assert "filesink location=/tmp/out.mp4" in pipeline
     # 板子上有落在 4 GB 以上的物理内存，MPP 插件默认借 RGA 搬帧会写坏内存、整机挂死
     assert rkmpp.gst_env()["GST_MPP_NO_RGA"] == "1"
+
+
+def test_writer_keeps_gst_output_off_the_terminal(monkeypatch, tmp_path):
+    """标准输出是终端时，gst-launch 每秒刷好多行管道位置（``0:00:01.2 / 99:99:99.``），``-q`` 关不掉；
+    网页终端里录数据会被它刷屏。"""
+    seen = {}
+
+    class FakeProc:
+        stdin = None
+
+        def __init__(self, cmd, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setattr(rkmpp.subprocess, "Popen", FakeProc)
+    rkmpp.RkmppH264Writer(tmp_path / "out.mp4", width=640, height=480, fps=30, qp=30, gop=2)
+    assert seen["stdout"] is subprocess.DEVNULL
 
 
 # ---------------------------------------------------------------- 两条编码路径

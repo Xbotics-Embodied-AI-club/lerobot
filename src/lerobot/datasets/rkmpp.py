@@ -91,10 +91,12 @@ class RkmppH264Writer:
     def __init__(self, video_path: str | Path, width: int, height: int, fps: int, qp: int, gop: int):
         self.video_path = Path(video_path)
         self.shape = (height, width, 3)
-        # gst-launch 把各参数拼起来再解析管道，不经 shell
+        # gst-launch 把各参数拼起来再解析管道，不经 shell。
+        # 标准输出不接终端：接着终端时它每秒刷好多行管道位置（-q 关不掉），网页终端里录数据会被刷屏
         self._proc = subprocess.Popen(  # nosec B603
             gst_command(self.video_path, width, height, fps, qp, gop),
             stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             env=gst_env(),
         )

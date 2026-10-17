@@ -51,6 +51,19 @@ def _clear_detection_caches():
         fn.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _display_servers_running(monkeypatch, tmp_path):
+    """X 显示 :0 与 Wayland 的 wayland-0 都在跑（有 socket）；没列在这里的显示号就是没有服务。"""
+    x11 = tmp_path / "x11"
+    x11.mkdir()
+    (x11 / "X0").touch()
+    monkeypatch.setattr(ki, "X11_SOCKET_DIR", x11)
+    runtime = tmp_path / "run"
+    runtime.mkdir()
+    (runtime / "wayland-0").touch()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+
+
 def _set_platform(monkeypatch, name):
     monkeypatch.setattr(platform, "system", lambda: name)
 
@@ -73,6 +86,26 @@ def _set_tty(monkeypatch, is_tty):
 )
 def test_is_headless(monkeypatch, system, env, expected):
     _set_platform(monkeypatch, system)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    assert is_headless() is expected
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"DISPLAY": ":1"}, True),  # 镜像写死了 DISPLAY、桌面没开（Xbotics 套件板子）
+        ({"DISPLAY": "unix:1"}, True),
+        ({"DISPLAY": ":0.0"}, False),
+        ({"DISPLAY": "localhost:10.0"}, False),  # SSH 转发来的远端显示：本机没有 socket，照信
+        ({"WAYLAND_DISPLAY": "wayland-1"}, True),
+        ({"DISPLAY": ":1", "WAYLAND_DISPLAY": "wayland-0"}, False),
+    ],
+)
+def test_display_without_a_running_server_is_headless(monkeypatch, env, expected):
+    _set_platform(monkeypatch, "Linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     for key, value in env.items():
