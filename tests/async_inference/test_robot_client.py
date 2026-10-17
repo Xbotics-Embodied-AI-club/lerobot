@@ -19,9 +19,11 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 
 from __future__ import annotations
 
+import pickle
 import time
 from queue import Queue
 
+import numpy as np
 import pytest
 import torch
 
@@ -267,3 +269,108 @@ def test_robot_client_registers_builtin_robot_types():
             f"Ensure the corresponding module is imported in robot_client.py. "
             f"Known choices: {sorted(known_choices)}"
         )
+
+
+# -----------------------------------------------------------------------------
+# 观测上传：压 JPEG + 后台线程发送（控制循环不等网络）
+# -----------------------------------------------------------------------------
+
+
+def _make_timed_obs(timestep: int, must_go: bool = False, frame: np.ndarray | None = None):
+    from lerobot.async_inference.helpers import TimedObservation
+
+    observation = {"shoulder_pan.pos": float(timestep)}
+    if frame is not None:
+        observation["top"] = frame
+    return TimedObservation(
+        timestamp=time.time(), timestep=timestep, observation=observation, must_go=must_go
+    )
+
+
+def _record_sends(robot_client, monkeypatch) -> list:
+    sent = []
+
+    def fake_send(obs):
+        sent.append(obs)
+        return True
+
+    monkeypatch.setattr(robot_client, "send_observation", fake_send)
+    return sent
+
+
+def test_background_sender_sends_only_the_latest_observation(robot_client, monkeypatch):
+    """发得慢时，没来得及发的旧观测被新的顶掉：服务端永远拿到最新的画面。"""
+    sent = _record_sends(robot_client, monkeypatch)
+
+    robot_client._submit_observation(_make_timed_obs(1))
+    robot_client._submit_observation(_make_timed_obs(2))
+    robot_client._send_pending_observation()
+    robot_client._send_pending_observation()
+
+    assert [obs.get_timestep() for obs in sent] == [2]
+
+
+def test_background_sender_carries_must_go_to_the_replacing_observation(robot_client, monkeypatch):
+    """被顶掉的那条若是 must_go（动作队列已空），顶替它的那条要接过标记，否则服务端可能不推理。"""
+    sent = _record_sends(robot_client, monkeypatch)
+
+    robot_client._submit_observation(_make_timed_obs(1, must_go=True))
+    robot_client._submit_observation(_make_timed_obs(2, must_go=False))
+    robot_client._send_pending_observation()
+
+    assert sent[0].get_timestep() == 2
+    assert sent[0].must_go
+
+
+def test_control_loop_observation_hands_off_to_background_sender(robot_client, monkeypatch):
+    sent = _record_sends(robot_client, monkeypatch)
+
+    robot_client.control_loop_observation(task="pick")
+    assert sent == [], "控制循环不应等发送"
+
+    robot_client._send_pending_observation()
+    assert len(sent) == 1
+    assert sent[0].get_observation()["task"] == "pick"
+
+
+def test_control_loop_observation_sends_inline_when_background_disabled(robot_client, monkeypatch):
+    robot_client.config.send_observations_in_background = False
+    sent = _record_sends(robot_client, monkeypatch)
+
+    robot_client.control_loop_observation(task="pick")
+
+    assert len(sent) == 1
+
+
+def _capture_uploads(robot_client, monkeypatch) -> list:
+    payloads = []
+
+    def fake_send_observations(iterator):
+        payloads.append(b"".join(message.data for message in iterator))
+
+    monkeypatch.setattr(robot_client.stub, "SendObservations", fake_send_observations)
+    return payloads
+
+
+def test_send_observation_uploads_jpeg_frames(robot_client, monkeypatch):
+    from lerobot.async_inference.helpers import JpegImage
+
+    payloads = _capture_uploads(robot_client, monkeypatch)
+    frame = np.full((48, 64, 3), 120, dtype=np.uint8)
+
+    assert robot_client.send_observation(_make_timed_obs(3, frame=frame))
+
+    uploaded = pickle.loads(payloads[0]).get_observation()  # nosec
+    assert isinstance(uploaded["top"], JpegImage)
+    assert uploaded["shoulder_pan.pos"] == 3.0
+
+
+def test_send_observation_uploads_raw_frames_when_jpeg_disabled(robot_client, monkeypatch):
+    robot_client.config.observation_jpeg_quality = 0
+    payloads = _capture_uploads(robot_client, monkeypatch)
+    frame = np.full((48, 64, 3), 120, dtype=np.uint8)
+
+    assert robot_client.send_observation(_make_timed_obs(3, frame=frame))
+
+    uploaded = pickle.loads(payloads[0]).get_observation()  # nosec
+    assert isinstance(uploaded["top"], np.ndarray)

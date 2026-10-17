@@ -59,6 +59,7 @@ from .helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    decode_observation_images,
     get_logger,
     observations_similar,
     raw_observation_to_observation,
@@ -206,6 +207,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
+        # 客户端压成 JPEG 的画面在这里解回数组；发原图的客户端原样放行
+        timed_observation.observation = decode_observation_images(timed_observation.get_observation())
         deserialize_time = time.perf_counter() - start_deserialize
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")

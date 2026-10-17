@@ -21,8 +21,11 @@ import torch
 
 from lerobot.async_inference.helpers import (
     FPSTracker,
+    JpegImage,
     TimedAction,
     TimedObservation,
+    decode_observation_images,
+    encode_observation_images,
     observations_similar,
     prepare_image,
     prepare_raw_observation,
@@ -448,3 +451,61 @@ def test_image_processing_pipeline_preserves_content():
     corner_val = processed_img[:, 5, 5].mean()  # Corner
 
     assert center_val > corner_val, "Image processing should preserve recognizable patterns"
+
+
+# ---------------------------------------------------------------------
+# 观测图压 JPEG 上传（robot_client 压、policy_server 解）
+# ---------------------------------------------------------------------
+
+
+def _camera_frame(height: int = 48, width: int = 64) -> np.ndarray:
+    """三个通道各不相同的画面：通道顺序被调换时能看出来。"""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[..., 0] = 200
+    frame[..., 1] = 90
+    frame[..., 2] = np.linspace(0, 40, width, dtype=np.uint8)[None, :]
+    return frame
+
+
+def test_encode_observation_images_compresses_only_camera_frames():
+    frame = _camera_frame()
+    observation = {"top": frame, "shoulder_pan.pos": 12.5, "task": "pick"}
+
+    encoded = encode_observation_images(observation, quality=90)
+
+    assert isinstance(encoded["top"], JpegImage)
+    assert len(encoded["top"].data) < frame.nbytes
+    assert encoded["shoulder_pan.pos"] == 12.5
+    assert encoded["task"] == "pick"
+    assert observation["top"] is frame, "传进来的观测不能被改"
+
+
+def test_jpeg_round_trip_keeps_shape_dtype_and_channel_order():
+    frame = _camera_frame()
+
+    decoded = decode_observation_images(encode_observation_images({"top": frame}, quality=90))["top"]
+
+    assert decoded.shape == frame.shape
+    assert decoded.dtype == np.uint8
+    per_channel_mean = decoded.reshape(-1, 3).mean(axis=0)
+    np.testing.assert_allclose(per_channel_mean, frame.reshape(-1, 3).mean(axis=0), atol=4)
+
+
+def test_decode_observation_images_passes_raw_frames_through():
+    """老客户端发的是原图：服务端照收，不动它。"""
+    frame = _camera_frame()
+    observation = {"top": frame, "shoulder_pan.pos": 1.0}
+
+    decoded = decode_observation_images(observation)
+
+    assert decoded["top"] is frame
+    assert decoded["shoulder_pan.pos"] == 1.0
+
+
+def test_encoded_observation_survives_pickle():
+    """观测是 pickle 后经 gRPC 发的，JpegImage 必须能原样往返。"""
+    encoded = encode_observation_images({"top": _camera_frame()}, quality=80)
+
+    restored = pickle.loads(pickle.dumps(encoded))  # nosec
+
+    assert restored["top"] == encoded["top"]
