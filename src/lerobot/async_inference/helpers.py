@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 import torch
 
 from lerobot.configs import PolicyFeature
@@ -233,6 +235,56 @@ class TimedObservation(TimedData):
 
     def get_observation(self):
         return self.observation
+
+
+@dataclass
+class JpegImage:
+    """robot_client 压好的一张相机画面（JPEG 字节）；policy_server 收到后解回数组再进前处理。
+
+    两路 640×480 原图 pickle 后每次约 1.8 MB：百兆网口一秒只发得出一两次，云服务器 5 Mbps 上行
+    更是发不动；压成 JPEG 后每张几十 KB。训练用的数据集本来就存成有损视频，JPEG 的损失与之同级。
+    """
+
+    data: bytes
+
+
+def _is_camera_frame(value: Any) -> bool:
+    return (
+        isinstance(value, np.ndarray) and value.dtype == np.uint8 and value.ndim == 3 and value.shape[2] == 3
+    )
+
+
+def encode_observation_images(observation: RawObservation, quality: int) -> RawObservation:
+    """把观测里的相机画面（H×W×3 uint8）压成 JpegImage，其余键原样带过；不改入参。
+
+    通道顺序原样往返：编码前按 RGB→BGR 转给 OpenCV，解码后再转回来，进来是什么顺序出去还是什么顺序。
+    """
+    encoded = {}
+    for key, value in observation.items():
+        if _is_camera_frame(value):
+            ok, buffer = cv2.imencode(
+                ".jpg", cv2.cvtColor(value, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, quality]
+            )
+            if not ok:
+                raise RuntimeError(f"JPEG 编码失败：{key} {value.shape}")
+            encoded[key] = JpegImage(buffer.tobytes())
+        else:
+            encoded[key] = value
+    return encoded
+
+
+def decode_observation_images(observation: RawObservation) -> RawObservation:
+    """把 JpegImage 解回 H×W×3 uint8 数组；原图（不压的客户端发来的）原样放行。"""
+    return {
+        key: (
+            cv2.cvtColor(
+                cv2.imdecode(np.frombuffer(value.data, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB
+            )
+            if isinstance(value, JpegImage)
+            else value
+        )
+        for key, value in observation.items()
+    }
 
 
 @dataclass

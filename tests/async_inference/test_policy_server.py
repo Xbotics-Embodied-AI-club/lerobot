@@ -217,3 +217,62 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+# -----------------------------------------------------------------------------
+# 观测上传：客户端压的 JPEG 在服务端解回原图再进前处理
+# -----------------------------------------------------------------------------
+
+
+class _Context:
+    def peer(self):
+        return "test-client"
+
+
+def _upload(policy_server, monkeypatch, observation: dict) -> dict:
+    """按 robot_client 的方式把一条观测发给 SendObservations，返回进了队列的那条观测。"""
+    import pickle
+
+    from lerobot.async_inference.helpers import TimedObservation
+    from lerobot.transport import services_pb2  # type: ignore
+    from lerobot.transport.utils import send_bytes_in_chunks
+
+    enqueued = []
+
+    def fake_enqueue(obs):
+        enqueued.append(obs)
+        return True
+
+    monkeypatch.setattr(policy_server, "_enqueue_observation", fake_enqueue)
+    timed = TimedObservation(timestamp=time.time(), timestep=0, observation=observation, must_go=True)
+    policy_server.SendObservations(
+        send_bytes_in_chunks(pickle.dumps(timed), services_pb2.Observation), _Context()
+    )
+    return enqueued[0].get_observation()
+
+
+def test_send_observations_decodes_jpeg_frames(policy_server, monkeypatch):
+    import numpy as np
+
+    from lerobot.async_inference.helpers import encode_observation_images
+
+    frame = np.full((48, 64, 3), 120, dtype=np.uint8)
+
+    received = _upload(
+        policy_server, monkeypatch, encode_observation_images({"top": frame, "joint1": 0.5}, quality=90)
+    )
+
+    assert isinstance(received["top"], np.ndarray)
+    assert received["top"].shape == frame.shape
+    assert received["joint1"] == 0.5
+
+
+def test_send_observations_accepts_raw_frames(policy_server, monkeypatch):
+    """不压的客户端（老版本、或 observation_jpeg_quality=0）照旧能用。"""
+    import numpy as np
+
+    frame = np.full((48, 64, 3), 120, dtype=np.uint8)
+
+    received = _upload(policy_server, monkeypatch, {"top": frame, "joint1": 0.5})
+
+    np.testing.assert_array_equal(received["top"], frame)

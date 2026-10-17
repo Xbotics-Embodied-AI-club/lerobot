@@ -38,7 +38,7 @@ import pickle  # nosec
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pprint import pformat
 from queue import Queue
 from typing import Any
@@ -74,6 +74,7 @@ from .helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    encode_observation_images,
     get_logger,
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
@@ -136,6 +137,11 @@ class RobotClient:
         self.must_go = threading.Event()
         self.must_go.set()  # Initially set - observations qualify for direct processing
 
+        # 观测上传（Xbotics）：控制循环只把最新一条放进待发位，由后台线程压 JPEG 并发出
+        self._pending_obs_lock = threading.Lock()
+        self._pending_obs: TimedObservation | None = None
+        self._pending_obs_ready = threading.Event()
+
     @property
     def running(self):
         return not self.shutdown_event.is_set()
@@ -163,6 +169,11 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self.shutdown_event.clear()
+
+            if self.config.send_observations_in_background:
+                threading.Thread(
+                    target=self._observation_sender, name="observation_sender", daemon=True
+                ).start()
 
             return True
 
@@ -193,6 +204,13 @@ class RobotClient:
             raise ValueError("Input observation needs to be a TimedObservation!")
 
         start_time = time.perf_counter()
+        if self.config.observation_jpeg_quality > 0:
+            obs = replace(
+                obs,
+                observation=encode_observation_images(
+                    obs.get_observation(), self.config.observation_jpeg_quality
+                ),
+            )
         observation_bytes = pickle.dumps(obs)
         serialize_time = time.perf_counter() - start_time
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
@@ -213,6 +231,31 @@ class RobotClient:
         except grpc.RpcError as e:
             self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
             return False
+
+    def _submit_observation(self, obs: TimedObservation) -> None:
+        """把观测放进待发位，顶掉还没发出去的那条 —— 服务端只该看到最新的画面。"""
+        with self._pending_obs_lock:
+            if self._pending_obs is not None:
+                # 被顶掉的那条若是 must_go（动作队列已空），由顶替它的这条接过标记，否则服务端可能不推理
+                obs.must_go = obs.must_go or self._pending_obs.must_go
+            self._pending_obs = obs
+            self._pending_obs_ready.set()
+
+    def _send_pending_observation(self) -> bool:
+        """取走待发位上的观测并发出；待发位是空的就什么也不做。返回是否发了。"""
+        with self._pending_obs_lock:
+            obs, self._pending_obs = self._pending_obs, None
+            self._pending_obs_ready.clear()
+        if obs is None:
+            return False
+        self.send_observation(obs)
+        return True
+
+    def _observation_sender(self):
+        """后台发送线程：压 JPEG、序列化、经 gRPC 发出都在这里，控制循环不等网络。"""
+        while self.running:
+            if self._pending_obs_ready.wait(timeout=0.1) and self.running:
+                self._send_pending_observation()
 
     def _inspect_action_queue(self):
         with self.action_queue_lock:
@@ -429,7 +472,10 @@ class RobotClient:
                 observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
 
-            _ = self.send_observation(observation)
+            if self.config.send_observations_in_background:
+                self._submit_observation(observation)
+            else:
+                _ = self.send_observation(observation)
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:

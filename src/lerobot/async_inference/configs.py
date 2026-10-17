@@ -148,6 +148,16 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # 观测上传（Xbotics）：相机画面压 JPEG 再发，发送放后台线程 —— 控制循环不等网络。
+    # 服务端两种都收；设 0 / False 即回到上游的「同步发原图」。
+    observation_jpeg_quality: int = field(
+        default=90, metadata={"help": "JPEG quality for camera frames sent to the server (0 = send raw)"}
+    )
+    send_observations_in_background: bool = field(
+        default=True,
+        metadata={"help": "Send observations from a background thread, always the latest one"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
@@ -157,6 +167,11 @@ class RobotClientConfig:
         """Validate configuration after initialization."""
         if not self.server_address:
             raise ValueError("server_address cannot be empty")
+
+        if not 0 <= self.observation_jpeg_quality <= 100:
+            raise ValueError(
+                f"observation_jpeg_quality must be between 0 and 100, got {self.observation_jpeg_quality}"
+            )
 
         if not self.policy_type:
             raise ValueError("policy_type cannot be empty")
@@ -200,4 +215,6 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "observation_jpeg_quality": self.observation_jpeg_quality,
+            "send_observations_in_background": self.send_observations_in_background,
         }
