@@ -6,16 +6,16 @@ Xbotics 维护的 lerobot 分支。这里是 **0.5 线：基线 `v0.5.1`，分�
 
 | 线 | 分支 | 标签 | 基线 | 谁在用 |
 |---|---|---|---|---|
-| 0.5 线 | `main` | `xbotics-v0.5.1.post1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
-| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1.post1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
+| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目、星禾套件板子；工作坊之后升到这条线 |
 
 ```bash
 git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
 git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.6 线
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.5.1.post1"
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.5.1"
 ```
 
-标签只增不改：`.post1` 是在 `xbotics-v0.5.1` 之后加了远程推理 JPEG 上传的版本，旧标签原样保留。
+标签 `xbotics-v0.6.1` / `xbotics-v0.5.1` 指向各条线当前推荐的版本，随修随前移（目前还没有外部使用者，不另起 `.postN`）；要钉死某一版就钉提交号。
 
 从 0.5 线迁到 0.6 线要改的地方（依赖拆成可选组、`--dataset.vcodec` 改名、`add_envs_task` 删除等），
 见 `xbotics-0.6` 分支上的 XBOTICS.md。板子与推理服务端必须用同一条线、同一个标签。
