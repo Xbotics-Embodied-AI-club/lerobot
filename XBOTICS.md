@@ -6,21 +6,23 @@ Xbotics 维护的 lerobot 分支。这里是 **0.5 线：基线 `v0.5.1`，分�
 
 | 线 | 分支 | 标签 | 基线 | 谁在用 |
 |---|---|---|---|---|
-| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
-| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
+| 0.5 线 | `main` | `xbotics-v0.5.1.post1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1.post1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
 
 ```bash
 git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
 git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.6 线
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.5.1"
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.5.1.post1"
 ```
 
+标签只增不改：`.post1` 是在 `xbotics-v0.5.1` 之后加了远程推理 JPEG 上传的版本，旧标签原样保留。
+
 从 0.5 线迁到 0.6 线要改的地方（依赖拆成可选组、`--dataset.vcodec` 改名、`add_envs_task` 删除等），
-见 `xbotics-0.6` 分支上的 XBOTICS.md。板子与推理服务端必须用同一条线。
+见 `xbotics-0.6` 分支上的 XBOTICS.md。板子与推理服务端必须用同一条线、同一个标签。
 
-功能是**一起装的**，没有「挑几个」这回事 —— 下面四项在 `main` 分支上一律可用。
+功能是**一起装的**，没有「挑几个」这回事 —— 下面几项在 `main` 分支上一律可用。
 
-## 四项改动
+## 改动
 
 | commit | 内容 |
 |---|---|
@@ -28,6 +30,28 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(policies)` | **VLA-0**（`--policy.type=vla0_smol`）。动作离散成整数当文本 token 让 VLM 自回归输出，VLM 本体零改装，xgrammar 约束解码。骨干 SmolVLM2，512 bin。 |
 | `feat(policies)` | **OpenVLA**（`--policy.type=openvla`）。7B prismatic，256 bin 动作 token，`forward()` 自带 CE loss 所以训练路径即原生 SFT。 |
 | `feat(envs)` | **SO-101 仿真评测口**（`--env.type=so101_sim`）。 |
+| `feat(async_inference)` | **policy_server 接受第三方插件策略**（`lerobot_policy_*`）。上游的 policy_server 只认一张固定白名单。 |
+| `feat(async_inference)` | **观测压 JPEG + 后台发送**，见下「远程推理」。 |
+
+## 远程推理：观测压 JPEG、后台发送（默认开）
+
+上游 `robot_client` 在控制循环里把两路原图 pickle 后同步发给服务端（640×480 两路约 1.8 MB/次），
+发完才执行下一个动作 —— 百兆网口上就一卡一卡，云服务器 5 Mbps 上行下根本发不动。本分支改为：
+
+- 相机画面压 JPEG 再发（`--observation_jpeg_quality=90`；设 0 即发原图）；
+- 控制循环只把最新一条观测放进待发位，由后台线程压缩、发送（`--send_observations_in_background=true`）；
+  发得慢时旧观测被新的顶掉，服务端总拿到最新的画面。
+
+两项默认都开，命令不用改。RK3566 板子 ↔ server 实测（ACT，两路 640×480 相机，70 s，两条线结果相同）：
+
+| | 动作频率 | 动作间隔 p95 | 板子平均上行 |
+|---|---|---|---|
+| 原图同步发，百兆局域网 | 16.6 Hz | 322 ms | — |
+| JPEG + 后台发，百兆局域网 | 29.4 Hz | 44 ms | 1.4 Mbps |
+| 原图同步发，上行限 5 Mbps | 3.9 Hz | 3 s | 2.4 Mbps |
+| JPEG + 后台发，上行限 5 Mbps | 29.5 Hz | 44 ms | 1.0 Mbps |
+
+⚠️ 新服务端收得了老客户端发的原图；新客户端（默认发 JPEG）连老服务端不行 —— 板子与服务端一起升级。
 
 ## 仿真器是独立仓
 
