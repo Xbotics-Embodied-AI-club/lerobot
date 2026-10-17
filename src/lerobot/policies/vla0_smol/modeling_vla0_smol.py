@@ -11,17 +11,26 @@
 import logging
 import random
 from collections import deque
+from typing import TYPE_CHECKING
 
 import torch
 from torch import Tensor, nn
 from torch.profiler import record_function
 from torchvision.transforms import CenterCrop, RandomCrop
-from transformers import AutoModelForImageTextToText, AutoProcessor
-from transformers.models.smolvlm.image_processing_smolvlm_fast import SmolVLMImageProcessorFast
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vla0_smol.configuration_vla0_smol import VLA0SmolConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+# transformers 是可选依赖（transformers-dep）。0.6 起 lerobot.policies 包一导入就会注册各策略的
+# 配置类，连带导入本模块；顶层无条件 import 的话，没装 transformers 的环境（如接臂板子只跑
+# robot_client）连 lerobot.async_inference 都导入不了。与上游 smolvla 同一写法。
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers.models.smolvlm.image_processing_smolvlm_fast import (
+        SmolVLMImageProcessorFast,
+    )
 
 PRECISION = {
     "float16": torch.float16,
@@ -192,6 +201,7 @@ class VLA0TemporalEnsembler:
 
 class VLA0(nn.Module):
     def __init__(self, config: VLA0SmolConfig):
+        require_package("transformers", extra="transformers-dep")
         super().__init__()
         self.config = config
 
