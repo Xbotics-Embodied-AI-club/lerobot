@@ -10,7 +10,6 @@
   输出超量程动作而无人知晓。见 `_maybe_inject_action_stats`。
 """
 
-
 from __future__ import annotations
 
 import builtins
@@ -81,7 +80,9 @@ def _load_openvla_remote_model_class(model_id: str, load_kwargs: dict[str, Any])
     auto_map = getattr(config, "auto_map", {}) or {}
     class_reference = auto_map.get("AutoModelForVision2Seq") or auto_map.get("AutoModelForImageTextToText")
     if class_reference is None:
-        raise ValueError(f"OpenVLA checkpoint at {model_id} does not define an AutoModel remote-code mapping.")
+        raise ValueError(
+            f"OpenVLA checkpoint at {model_id} does not define an AutoModel remote-code mapping."
+        )
     # Keep any `repo--module.Class` cross-repo prefix: official finetuned-libero checkpoints
     # reference modeling_prismatic.py in base openvla/openvla-7b. get_class_from_dynamic_module
     # resolves the prefixed repo natively; stripping it breaks the load on transformers>=5 (where
@@ -174,7 +175,9 @@ def _load_openvla_remote_model_without_meta_init(
         unexpected_keys.extend(str(key) for key in incompatible.unexpected_keys)
         del state_dict
     if unexpected_keys:
-        raise RuntimeError(f"Unexpected OpenVLA checkpoint keys while loading {model_id}: {unexpected_keys[:10]}")
+        raise RuntimeError(
+            f"Unexpected OpenVLA checkpoint keys while loading {model_id}: {unexpected_keys[:10]}"
+        )
     if hasattr(model, "tie_weights"):
         model.tie_weights()
     return model.to(dtype=torch_dtype)
@@ -291,7 +294,8 @@ class OpenVLAPolicy(PreTrainedPolicy):
             raise ValueError(f"Unsupported OpenVLA torch_dtype '{self.config.torch_dtype}'.")
         load_kwargs: dict[str, Any] = {
             "trust_remote_code": True,
-            "local_files_only": bool(os.environ.get("HF_HUB_OFFLINE")) or bool(os.environ.get("TRANSFORMERS_OFFLINE")),
+            "local_files_only": bool(os.environ.get("HF_HUB_OFFLINE"))
+            or bool(os.environ.get("TRANSFORMERS_OFFLINE")),
         }
         processor = AutoProcessor.from_pretrained(model_id, **load_kwargs)
         model_kwargs = {
@@ -314,7 +318,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
             if "Unrecognized configuration class" not in str(exc):
                 raise
             remote_model_cls = _load_openvla_remote_model_class(model_id, load_kwargs)
-            model = _load_openvla_remote_model_without_meta_init(model_id, remote_model_cls, load_kwargs, torch_dtype)
+            model = _load_openvla_remote_model_without_meta_init(
+                model_id, remote_model_cls, load_kwargs, torch_dtype
+            )
         return processor, model
 
     def reset(self) -> None:
@@ -330,7 +336,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
             batch = dict(batch)
             batch[ACTION] = batch[ACTION][..., self._parse_action_slice(batch[ACTION].shape[-1])]
 
-        prompts = [self.config.prompt_template.format(task=task.lower()) for task in self._extract_tasks(batch)]
+        prompts = [
+            self.config.prompt_template.format(task=task.lower()) for task in self._extract_tasks(batch)
+        ]
         images = self._extract_images(batch)
         inputs = self.processor(
             prompts,
@@ -393,7 +401,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
             nxt = out.logits[:, -1].argmax(dim=-1, keepdim=True)
             gen = torch.cat([gen, nxt], dim=1)
             if cur_attn is not None:
-                cur_attn = torch.cat([cur_attn, torch.ones((1, 1), device=cur_attn.device, dtype=cur_attn.dtype)], dim=1)
+                cur_attn = torch.cat(
+                    [cur_attn, torch.ones((1, 1), device=cur_attn.device, dtype=cur_attn.dtype)], dim=1
+                )
         tok = gen[0, -adim:].cpu().numpy()
         bin_centers = np.asarray(m.bin_centers)
         disc = np.clip(m.vocab_size - tok - 1, 0, bin_centers.shape[0] - 1)
@@ -430,7 +440,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
     def _infer_batch_size(self, batch: dict[str, Any]) -> int:
         if ACTION in batch and isinstance(batch[ACTION], Tensor):
             return int(batch[ACTION].shape[0])
-        if self.config.image_feature_key in batch and isinstance(batch[self.config.image_feature_key], Tensor):
+        if self.config.image_feature_key in batch and isinstance(
+            batch[self.config.image_feature_key], Tensor
+        ):
             image = batch[self.config.image_feature_key]
             return int(image.shape[0]) if image.ndim == 4 else 1
         return 1
@@ -438,7 +450,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
     def _extract_image(self, batch: dict[str, Any]) -> Image.Image:
         if self.config.image_feature_key not in batch:
             available = ", ".join(sorted(str(k) for k in batch if str(k).startswith("observation.images.")))
-            raise KeyError(f"Missing OpenVLA image key '{self.config.image_feature_key}'. Available: {available}")
+            raise KeyError(
+                f"Missing OpenVLA image key '{self.config.image_feature_key}'. Available: {available}"
+            )
         image = batch[self.config.image_feature_key]
         if isinstance(image, Tensor):
             image = image.detach().cpu()
@@ -501,7 +515,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
     def _postprocess_libero_action(self, action: Any) -> Tensor:
         action_tensor = torch.as_tensor(action, dtype=torch.float32).flatten()
         if action_tensor.numel() != self.config.action_dim:
-            raise ValueError(f"Expected {self.config.action_dim}D OpenVLA action, got {action_tensor.numel()}D.")
+            raise ValueError(
+                f"Expected {self.config.action_dim}D OpenVLA action, got {action_tensor.numel()}D."
+            )
         # Official LIBERO OpenVLA eval maps gripper [0, 1] -> {-1, +1}, then inverts for env.step.
         gripper = torch.where(action_tensor[-1] > 0.5, torch.tensor(1.0), torch.tensor(-1.0))
         action_tensor[-1] = -gripper
@@ -589,7 +605,9 @@ class OpenVLAPolicy(PreTrainedPolicy):
         if actions.ndim == 3:
             actions = actions[:, 0, :]
         if actions.ndim != 2 or actions.shape[-1] != self.config.action_dim:
-            raise ValueError(f"Expected action tensor with shape (B, {self.config.action_dim}), got {tuple(actions.shape)}.")
+            raise ValueError(
+                f"Expected action tensor with shape (B, {self.config.action_dim}), got {tuple(actions.shape)}."
+            )
         actions = actions.detach().to(dtype=torch.float32, device="cpu")
         q01 = self._action_stats["q01"].to(actions.device)
         q99 = self._action_stats["q99"].to(actions.device)

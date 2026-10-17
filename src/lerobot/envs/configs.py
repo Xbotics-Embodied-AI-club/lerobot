@@ -709,9 +709,7 @@ class So101SimEnv(EnvConfig):
 
     def __post_init__(self):
         if self.unit_convention not in ("real", "maniskill"):
-            raise ValueError(
-                f"unit_convention 只能是 'real' 或 'maniskill'，收到 {self.unit_convention!r}"
-            )
+            raise ValueError(f"unit_convention 只能是 'real' 或 'maniskill'，收到 {self.unit_convention!r}")
         if self.obs_type == "pixels":
             for camera in ("top", "wrist"):
                 self.features[f"pixels/{camera}"] = PolicyFeature(

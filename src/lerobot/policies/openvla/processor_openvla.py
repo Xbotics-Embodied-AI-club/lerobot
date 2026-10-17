@@ -40,7 +40,9 @@ def make_openvla_pre_post_processors(
             to_output=transition_to_batch,
         ),
         PolicyProcessorPipeline(
-            steps=[AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step)],
+            steps=[
+                AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step)
+            ],
             name="OpenVLAActionAbsoluteProcessor",
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
