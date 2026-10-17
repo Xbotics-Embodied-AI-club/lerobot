@@ -49,6 +49,7 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .depth_utils import quantize_depth
 from .pyav_utils import get_pix_fmt_channels
+from .rkmpp import RKMPP_VCODEC, RkmppH264Writer
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +493,21 @@ def encode_video_frames(
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
+    if vcodec == RKMPP_VCODEC:
+        # Xbotics：瑞芯微 MPP 硬件编码，经 GStreamer（见 lerobot.datasets.rkmpp）
+        if is_depth:
+            raise ValueError(f"{RKMPP_VCODEC} only encodes RGB frames")
+        writer = _open_rkmpp_writer(video_path, width, height, fps, video_encoder)
+        try:
+            for input_data in input_list:
+                with Image.open(input_data) as input_image:
+                    writer.write(np.asarray(input_image.convert("RGB")))
+        except BaseException:
+            writer.abort()
+            raise
+        writer.close()
+        return
+
     video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
@@ -748,6 +764,14 @@ def concatenate_video_files(
     Path(tmp_concatenate_path).unlink()
 
 
+def _open_rkmpp_writer(
+    video_path: Path, width: int, height: int, fps: int, video_encoder: VideoEncoderConfig
+) -> RkmppH264Writer:
+    qp = int(video_encoder.crf) if video_encoder.crf is not None else 30
+    gop = int(video_encoder.g) if video_encoder.g is not None else 2
+    return RkmppH264Writer(video_path, width, height, fps, qp=qp, gop=gop)
+
+
 class _CameraEncoderThread(threading.Thread):
     """A thread that encodes video frames streamed via a queue into an MP4 file.
 
@@ -782,6 +806,10 @@ class _CameraEncoderThread(threading.Thread):
 
         container = None
         output_stream = None
+        writer: RkmppH264Writer | None = None
+        use_rkmpp = self.video_encoder.vcodec == RKMPP_VCODEC
+        # Xbotics：每几帧算一次图像统计（ARM 板子默认 10）；前两帧总算，保证统计至少两个样本
+        stats_every = self.video_encoder.resolved_stats_every()
         stats_tracker = RunningQuantileStats()
         frame_count = 0
 
@@ -808,8 +836,16 @@ class _CameraEncoderThread(threading.Thread):
                     if not self.is_depth and frame_data.dtype != np.uint8:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
+                if use_rkmpp:
+                    if writer is None:
+                        height, width = frame_data.shape[:2]
+                        Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
+                        writer = _open_rkmpp_writer(
+                            self.video_path, width, height, self.fps, self.video_encoder
+                        )
+                    writer.write(frame_data)
                 # Open container on first frame (to get width/height)
-                if container is None:
+                elif container is None:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
@@ -823,32 +859,34 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.height = height
                     output_stream.time_base = Fraction(1, self.fps)
 
-                # Encode frame with explicit timestamps
-                if not self.is_depth:
-                    pil_img = Image.fromarray(frame_data)
-                    video_frame = av.VideoFrame.from_image(pil_img)
-                else:
-                    video_frame = quantize_depth(
-                        frame_data,
-                        depth_min=self.video_encoder.depth_min,
-                        depth_max=self.video_encoder.depth_max,
-                        shift=self.video_encoder.shift,
-                        use_log=self.video_encoder.use_log,
-                        video_backend=self.video_encoder.video_backend,
-                    )
-                video_frame.pts = frame_count
-                video_frame.time_base = Fraction(1, self.fps)
-                packet = output_stream.encode(video_frame)
-                if packet:
-                    container.mux(packet)
+                if not use_rkmpp:
+                    # Encode frame with explicit timestamps
+                    if not self.is_depth:
+                        pil_img = Image.fromarray(frame_data)
+                        video_frame = av.VideoFrame.from_image(pil_img)
+                    else:
+                        video_frame = quantize_depth(
+                            frame_data,
+                            depth_min=self.video_encoder.depth_min,
+                            depth_max=self.video_encoder.depth_max,
+                            shift=self.video_encoder.shift,
+                            use_log=self.video_encoder.use_log,
+                            video_backend=self.video_encoder.video_backend,
+                        )
+                    video_frame.pts = frame_count
+                    video_frame.time_base = Fraction(1, self.fps)
+                    packet = output_stream.encode(video_frame)
+                    if packet:
+                        container.mux(packet)
 
-                # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
-                img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
-                img_downsampled = auto_downsample_height_width(img_chw)
-                # Reshape CHW to (H*W, C) for per-channel stats
-                channels = img_downsampled.shape[0]
-                img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
-                stats_tracker.update(img_for_stats)
+                if frame_count < 2 or frame_count % stats_every == 0:
+                    # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
+                    img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
+                    img_downsampled = auto_downsample_height_width(img_chw)
+                    # Reshape CHW to (H*W, C) for per-channel stats
+                    channels = img_downsampled.shape[0]
+                    img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+                    stats_tracker.update(img_for_stats)
 
                 frame_count += 1
 
@@ -860,6 +898,9 @@ class _CameraEncoderThread(threading.Thread):
 
             if container is not None:
                 container.close()
+
+            if writer is not None:
+                writer.close()
 
             av.logging.restore_default_callback()
 
@@ -875,6 +916,8 @@ class _CameraEncoderThread(threading.Thread):
             if container is not None:
                 with contextlib.suppress(Exception):
                     container.close()
+            if writer is not None:
+                writer.abort()
             self.result_queue.put(("error", str(e)))
 
 

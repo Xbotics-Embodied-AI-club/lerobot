@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Self
 
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and the chosen video backend.
 # Determines the order of preference for auto-selection when vcodec="auto" is used.
+# Xbotics：瑞芯微 MPP 硬件 H.264（RK3566 / RK3576 板子，经 GStreamer，见 lerobot.datasets.rkmpp）。
+# PyAV 的 FFmpeg 不含它，所以不经 detect_available_encoders 探测，单独判断。
+RKMPP_VCODEC = "h264_rkmpp"
 HW_VIDEO_CODECS = [
+    RKMPP_VCODEC,  # Rockchip boards (Xbotics)
     "h264_videotoolbox",  # macOS
     "hevc_videotoolbox",  # macOS
     "h264_nvenc",  # NVIDIA GPU
@@ -97,6 +102,9 @@ class VideoEncoderConfig:
     video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.
     # Extra codec options merged last, e.g. {"tune": "film"}.
     extra_options: dict[str, Any] = field(default_factory=dict)
+    # Xbotics：边录边编时每几帧算一次图像统计。0 = 按平台自动（ARM 板子 10，其余 1 即逐帧）。
+    # 弱 CPU 板子上逐帧统计是录制瓶颈；每 10 帧一次与逐帧的均值差 ≤0.00025。不持久化到 info.json。
+    stats_every: int = 0
 
     # Source-data channel count this encoder is expected to handle. ``None``
     # disables the pix_fmt channel-count check; concrete subclasses set it
@@ -104,6 +112,8 @@ class VideoEncoderConfig:
     _DEFAULT_CHANNELS: ClassVar[int | None] = None
 
     def __post_init__(self) -> None:
+        if self.stats_every < 0:
+            raise ValueError(f"stats_every must be >= 0 (0 = auto), got {self.stats_every}")
         self.resolve_vcodec()
         # Empty-constructor ergonomics: ``VideoEncoderConfig()`` must "just work".
         if self.preset is None and self.vcodec == "libsvtav1":
@@ -157,8 +167,26 @@ class VideoEncoderConfig:
             return detect_available_encoders_pyav(encoders)
         return []
 
+    def resolved_stats_every(self) -> int:
+        """Frame stride for per-frame image stats during streaming encoding (``stats_every``, 0 = auto)."""
+        from lerobot.datasets import rkmpp
+
+        return self.stats_every or rkmpp.default_stats_every()
+
+    def _prefer_rkmpp(self, explicit_auto: bool) -> bool:
+        """RGB 编码在瑞芯微板子上改走 MPP：``auto`` 总是优先它；默认的 libsvtav1 除非 ``LEROBOT_RKMPP=0``。"""
+        if self._DEFAULT_CHANNELS != 3:
+            return False
+        if not explicit_auto and os.environ.get("LEROBOT_RKMPP", "1") == "0":
+            return False
+        from lerobot.datasets import rkmpp
+
+        return rkmpp.rkmpp_available()
+
     def validate(self) -> None:
         """Validate the video encoder configuration."""
+        if self.vcodec == RKMPP_VCODEC:
+            return  # 经 GStreamer 编码，不走 PyAV；可用性在 resolve_vcodec 里查过
         if self.video_backend == "pyav":
             require_package("av", extra="dataset")
             from lerobot.datasets import check_video_encoder_parameters_pyav
@@ -179,6 +207,21 @@ class VideoEncoderConfig:
         self.vcodec = VIDEO_CODECS_ALIASES.get(self.vcodec, self.vcodec)
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
+        if self.vcodec in ("auto", "libsvtav1") and self._prefer_rkmpp(explicit_auto=self.vcodec == "auto"):
+            # 板子上 libsvtav1 软件编码约 11 fps，跟不上 30 fps 的录制
+            logger.info(
+                f"Rockchip board with MPP: using hardware video codec {RKMPP_VCODEC} instead of {self.vcodec}"
+            )
+            self.vcodec = RKMPP_VCODEC
+            return
+        if self.vcodec == RKMPP_VCODEC:
+            from lerobot.datasets import rkmpp
+
+            if rkmpp.rkmpp_available():
+                return
+            raise ValueError(
+                f"Unsupported video codec: {RKMPP_VCODEC} needs a Rockchip board with GStreamer's mpph264enc"
+            )
         if self.vcodec == "auto":
             available = self.detect_available_encoders(HW_VIDEO_CODECS)
             for encoder in HW_VIDEO_CODECS:
@@ -251,6 +294,8 @@ class VideoEncoderConfig:
         elif self.vcodec == "h264_qsv":
             set_if("global_quality", self.crf)
             set_if("preset", self.preset)
+        elif self.vcodec == RKMPP_VCODEC:
+            set_if("qp", self.crf)  # mpph264enc rc-mode=fixqp 的 qp-init
         else:
             set_if("crf", self.crf)
             set_if("preset", self.preset)

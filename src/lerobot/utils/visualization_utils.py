@@ -21,13 +21,30 @@ this module does not import ``rerun`` or ``foxglove`` (each backend imports its 
 ``require_package`` guard).
 """
 
+import logging
+import os
+
 from lerobot.lerobot_types import RobotAction, RobotObservation
 
 from .foxglove_visualization import init_foxglove, log_foxglove_data, shutdown_foxglove
 from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun
+from .rerun_web_visualization import init_rerun_web, log_rerun_web_data, shutdown_rerun_web
 
 # Visualization backends selectable at runtime via a display-mode string (e.g. a --display_mode flag).
-VISUALIZATION_MODES = ("rerun", "foxglove")
+# "web"（Xbotics）：板子自己出网页，浏览器打开 http://<板子>:9090 看，见 rerun_web_visualization。
+VISUALIZATION_MODES = ("rerun", "foxglove", "web")
+
+# Xbotics：没有图形桌面（板子不开桌面、经 SSH / 网页终端操作）又没指定远端 rerun 服务时，
+# "rerun" 拉不起原生查看器，自动改走 "web"。之后的 log / shutdown 跟着走 "web"。
+_web_override = False
+
+
+def _has_desktop() -> bool:
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _resolve(display_mode: str) -> str:
+    return "web" if display_mode == "rerun" and _web_override else display_mode
 
 
 def init_visualization(
@@ -44,10 +61,18 @@ def init_visualization(
     for all interfaces) and ``port`` is its port.
     """
 
+    global _web_override
+    if display_mode == "rerun" and not (ip and port) and not _has_desktop():
+        logging.info("没有图形桌面：rerun 改为板子出网页预览（display_mode=web）")
+        _web_override = True
+    display_mode = _resolve(display_mode)
+
     if display_mode == "rerun":
         init_rerun(session_name=session_name, ip=ip, port=port)
     elif display_mode == "foxglove":
         init_foxglove(host=ip or "127.0.0.1", port=port)
+    elif display_mode == "web":
+        init_rerun_web(web_port=port)
     else:
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 
@@ -60,10 +85,13 @@ def log_visualization_data(
 ) -> None:
     """Logs observation/action data to the backend selected by ``display_mode``."""
 
+    display_mode = _resolve(display_mode)
     if display_mode == "rerun":
         log_rerun_data(observation=observation, action=action, compress_images=compress_images)
     elif display_mode == "foxglove":
         log_foxglove_data(observation=observation, action=action, compress_images=compress_images)
+    elif display_mode == "web":
+        log_rerun_web_data(observation=observation, action=action, compress_images=compress_images)
     else:
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 
@@ -71,9 +99,14 @@ def log_visualization_data(
 def shutdown_visualization(display_mode: str) -> None:
     """Shuts down the backend selected by ``display_mode``."""
 
-    if display_mode == "rerun":
+    global _web_override
+    resolved = _resolve(display_mode)
+    _web_override = False
+    if resolved == "rerun":
         shutdown_rerun()
-    elif display_mode == "foxglove":
+    elif resolved == "foxglove":
         shutdown_foxglove()
+    elif resolved == "web":
+        shutdown_rerun_web()
     else:
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
