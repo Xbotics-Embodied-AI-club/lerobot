@@ -6,8 +6,8 @@ Xbotics 维护的 lerobot 分支。这里是 **0.6 线：基线 `v0.6.1`，分�
 
 | 线 | 分支 | 标签 | 基线 | 谁在用 |
 |---|---|---|---|---|
-| 0.5 线 | `main` | `xbotics-v0.5.1.post1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
-| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1.post2` | 上游 `v0.6.1` | 新项目、星禾套件板子；工作坊之后升到这条线 |
+| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目、星禾套件板子；工作坊之后升到这条线 |
 
 ```bash
 # 克隆：-b 选线（分支跟着修，标签钉死不动）
@@ -15,12 +15,12 @@ git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git
 git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
 
 # 当依赖装（uv 项目的 pyproject.toml 里写；要复现就钉标签）
-#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1.post2" }
-#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.5.1.post1" }
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1.post2"
+#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1" }
+#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.5.1" }
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1"
 ```
 
-标签只增不改，旧标签原样保留：`.post1` 加了远程推理 JPEG 上传（及 0.6 线一处评测修复）；0.6 线的 `.post2` 再加接臂板子上录数据的三项（瑞芯微硬件编码、统计抽样、网页预览，见下）。
+标签 `xbotics-v0.6.1` / `xbotics-v0.5.1` 指向各条线当前推荐的版本，随修随前移（目前还没有外部使用者，不另起 `.postN`）；要钉死某一版就钉提交号。
 
 功能是**一起装的**，没有「挑几个」这回事 —— 下面几项在本分支上一律可用。
 
@@ -168,10 +168,10 @@ BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robot
 | torch（锁文件） | 2.10 | 2.11（ARMv8.0 板子见上一节） |
 
 没变的：机器人 / 相机 / 第三方插件的注册方式；`robot_client` 与 `policy_server` 的命令行参数
-（工作坊那组实测两条线通用）。边录边编的统计在 0.6 线 `.post2` 起按平台抽样（板子每 10 帧，其余逐帧），0.5 线仍逐帧。
+（工作坊那组实测两条线通用）。边录边编的统计在 0.6 线按平台抽样（板子每 10 帧，其余逐帧），0.5 线仍逐帧。
 
 ⚠️ **板子与推理服务端必须用同一条线、同一个标签**：两端经 gRPC 互传 pickle 后的 LeRobot 对象，
-0.5 客户端连 0.6 服务端（或反过来）没有验证过；JPEG 上传也要两端都是 `.post1` 及以后（工作坊升级时两端一起换到 `xbotics-v0.6.1.post2`）。
+0.5 客户端连 0.6 服务端（或反过来）没有验证过；JPEG 上传要两端都是带它的版本（工作坊升级时两端一起换到 `xbotics-v0.6.1`）。
 
 ## 跟上游的关系
 
