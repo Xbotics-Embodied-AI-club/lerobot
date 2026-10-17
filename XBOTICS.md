@@ -1,12 +1,22 @@
 # 这个 fork 加了什么
 
-Xbotics 维护的 lerobot 分支。**基线 `v0.5.1`**，工作分支 `main`。
+Xbotics 维护的 lerobot 分支。这里是 **0.5 线：基线 `v0.5.1`，分支 `main`**。
 
-装它：
+## 两条版本线，按需选
+
+| 线 | 分支 | 标签 | 基线 | 谁在用 |
+|---|---|---|---|---|
+| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
 
 ```bash
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@main"
+git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
+git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.6 线
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.5.1"
 ```
+
+从 0.5 线迁到 0.6 线要改的地方（依赖拆成可选组、`--dataset.vcodec` 改名、`add_envs_task` 删除等），
+见 `xbotics-0.6` 分支上的 XBOTICS.md。板子与推理服务端必须用同一条线。
 
 功能是**一起装的**，没有「挑几个」这回事 —— 下面四项在 `main` 分支上一律可用。
 
@@ -77,9 +87,9 @@ BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robot
 
 ## 跟上游的关系
 
-`upstream` = `huggingface/lerobot`。上游当前已到 v0.6.1，我们**有意停在 v0.5.1**：
-全部教学与实验代码都按这个版本验证过。v0.6.1 含破坏性改名（`lerobot.types` →
-`lerobot.lerobot_types`），要跟的话得单开一条分支重验。
+`upstream` = `huggingface/lerobot`。本分支停在 v0.5.1：现有的教学与实验代码都按这个版本验证过。
+跟进上游 v0.6.1 的是另一条线 `xbotics-0.6`（在 v0.6.1 上逐个重放本分支的 commit，重新验证过），
+两条线都保留。
 
 四个 commit 各自独立、按上面表格的顺序摞在 `v0.5.1` 上；两个 policy 的 commit
 都动 `factory.py`，顺序不可换。
