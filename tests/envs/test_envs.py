@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import pickle
+import sys
 from dataclasses import dataclass, field
 
 import gymnasium as gym
@@ -22,6 +24,7 @@ import pytest
 import torch
 from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
+from gymnasium.vector.utils import CloudpickleWrapper
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig, So101SimEnv
@@ -119,6 +122,63 @@ def test_factory_custom_gym_id():
     finally:
         if gym_id in gym_registry:
             del gym_registry[gym_id]
+
+
+def test_env_fn_registers_package_in_fresh_process(tmp_path, monkeypatch):
+    """An env registered by importing its package must be constructible in a process that never imported it.
+
+    AsyncVectorEnv workers are started with the "forkserver" context, so they do not inherit the
+    registry the parent filled in by importing `package_name`. This simulates such a worker: the
+    env factory is shipped the way AsyncVectorEnv ships it (CloudpickleWrapper, pickled while the
+    parent's registry still holds the id), then the id is dropped from the registry and the package
+    from `sys.modules` before the factory runs, exactly the state a forkserver child sees.
+    """
+    pkg = "lerobot_test_import_registered_env"
+    env_id = "LeRobotTestImportRegistered-v0"
+    if env_id in gym_registry:
+        pytest.skip(f"Environment ID {env_id} is already registered")
+
+    package_dir = tmp_path / pkg
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text(
+        "import gymnasium as gym\n"
+        f"gym.register(id={env_id!r}, entry_point='gymnasium.envs.classic_control:CartPoleEnv')\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    @EnvConfig.register_subclass("dummy_import_registered")
+    @dataclass
+    class ImportRegisteredEnv(EnvConfig):
+        task: str = env_id
+        features: dict[str, PolicyFeature] = field(default_factory=dict)
+
+        @property
+        def package_name(self) -> str:
+            return pkg
+
+        @property
+        def gym_id(self) -> str:
+            return env_id
+
+        @property
+        def gym_kwargs(self) -> dict:
+            return {}
+
+    try:
+        vec = ImportRegisteredEnv().create_envs(n_envs=1)["dummy_import_registered"][0]
+        vec.close()
+        # Globals the factory closes over travel by value, as copies taken in the parent.
+        shipped = pickle.dumps(CloudpickleWrapper(vec.env_fns[0]))
+
+        del gym_registry[env_id]
+        monkeypatch.delitem(sys.modules, pkg)
+
+        env = pickle.loads(shipped)()
+        assert env.spec.id == env_id
+        env.close()
+    finally:
+        if env_id in gym_registry:
+            del gym_registry[env_id]
 
 
 # Hub environment loading tests
