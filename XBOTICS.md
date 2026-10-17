@@ -1,23 +1,40 @@
 # 这个 fork 加了什么
 
-Xbotics 维护的 lerobot 分支。**基线 `v0.5.1`**，工作分支 `main`。
+Xbotics 维护的 lerobot 分支。这里是 **0.6 线：基线 `v0.6.1`，分支 `xbotics-0.6`**。
 
-装它：
+## 两条版本线，按需选
+
+| 线 | 分支 | 标签 | 基线 | 谁在用 |
+|---|---|---|---|---|
+| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
+| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目；Xbotics 的改动都已搬过来并重新验证 |
 
 ```bash
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@main"
+# 克隆：-b 选线（分支跟着修，标签钉死不动）
+git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.6 线
+git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
+
+# 当依赖装（uv 项目的 pyproject.toml 里写；要复现就钉标签）
+#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1" }
+#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.5.1" }
+pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1"
 ```
 
-功能是**一起装的**，没有「挑几个」这回事 —— 下面四项在 `main` 分支上一律可用。
+功能是**一起装的**，没有「挑几个」这回事 —— 下面几项在本分支上一律可用。
 
-## 四项改动
+## 改动
 
 | commit | 内容 |
 |---|---|
-| `fix(groot)` | `GR00TN15Config` 去掉 `@dataclass`。HF 的 `PretrainedConfig` 子类不能再套 `@dataclass`，两边都要接管 `__init__`，实例化即崩。上游 v0.5.0→v0.5.1 未修。**这条是纯 bugfix，与我们的业务无关，可以提回上游。** |
 | `feat(policies)` | **VLA-0**（`--policy.type=vla0_smol`）。动作离散成整数当文本 token 让 VLM 自回归输出，VLM 本体零改装，xgrammar 约束解码。骨干 SmolVLM2，512 bin。 |
 | `feat(policies)` | **OpenVLA**（`--policy.type=openvla`）。7B prismatic，256 bin 动作 token，`forward()` 自带 CE loss 所以训练路径即原生 SFT。 |
 | `feat(envs)` | **SO-101 仿真评测口**（`--env.type=so101_sim`）。 |
+| `feat(async_inference)` | **policy_server 接受第三方插件策略**（`lerobot_policy_*`）。上游 0.6.1 的 policy_server 仍只认一张固定白名单。 |
+
+0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
+（上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
+diffusers 上界放到 0.41（上游 `diffusers-dep` 是 `>=0.38,<0.40`，0.38 起那个 import 期的 bug 已修）、
+PEFT 续训适配器被冻与重复包装（上游两处都修了）。
 
 ## 仿真器是独立仓
 
@@ -68,18 +85,45 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
 这些都真实踩过：一次 ACT 评测拿到 0%、一次 SmolVLA 六个 checkpoint 全 0，
 两次都排查到最后才发现是口径而不是策略。
 
-## aarch64（地瓜 RDK S100 / S600 板端）
+## aarch64 板端（接机械臂的板子：瑞芯微 RK3566 / RK3576、地瓜 RDK 等）
 
-仿真依赖带了平台标记 —— mani-skill 的物理后端 `sapien` 不发 aarch64 轮子。
-板端走 `lerobot[feetech]` 只做舵机与相机，不跑仿真，安装不受影响。
-BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robotics/rdk_LeRobot_tools)，
-不在本 fork 内。
+仿真依赖带了平台标记 —— mani-skill 的物理后端 `sapien` 不发 aarch64 轮子，板端不跑仿真，安装不受影响。
+板端只做舵机、相机、录数据与远程推理客户端，0.6 线要装 **`lerobot[feetech,async,dataset,viz]`**
+（0.6 起 datasets 与 rerun 都不在核心依赖里了）。另有两处要在板子自己的环境里处理：
+
+- **torch**：上游 aarch64 轮子从 2.10 起在 ARMv8.0 核（A53 / A72）上一导入就 `Illegal instruction`；
+  这类板子钉 `torch==2.9.1`。A55（RK3566，ARMv8.2）上 2.10 实测可用。
+- **torchcodec**：`dataset` 组在 aarch64 上要求 `>=0.11`，而那份 aarch64 轮子是对着 CUDA 13 编的，
+  没有 NVIDIA 显卡的板子上必然加载失败（找 `libnvrtc.so.13`）、刷一屏报错后退回 PyAV ⇒ 板子环境里直接
+  排除它（uv：`override-dependencies = ["torchcodec; sys_platform == 'never'"]`）。
+
+BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robotics/rdk_LeRobot_tools)，不在本 fork 内。
+
+## 从 0.5 线迁到 0.6 线要改什么
+
+上游 0.5.1 → 0.6.1 之间有 321 个 commit。我们自己的代码（工作坊教学仓、DM0.5 插件、套件实验、讲义）
+用到的 76 个 LeRobot 导入里，0.6 线只少了 `add_envs_task`；其余变化在用法上：
+
+| 变化 | 0.5 线 | 0.6 线 |
+|---|---|---|
+| 依赖 | datasets / accelerate / diffusers 是核心依赖 | 挪进可选组：`dataset`、`accelerate-dep`、`diffusers-dep`；rerun 在 `viz`；transformers 在 `transformers-dep` |
+| 录数据选编码器（命令行） | `--dataset.vcodec=h264` | `--dataset.rgb_encoder.vcodec=h264` |
+| 录数据选编码器（Python） | `LeRobotDataset.create(..., vcodec="h264")` | `create(..., rgb_encoder=RGBEncoderConfig(vcodec="h264"))`（`lerobot.configs.video`） |
+| 模块路径 | `lerobot.types` | `lerobot.lerobot_types`；`PreTrainedConfig` 可从 `lerobot.configs` 导，`get_policy_class` / `make_pre_post_processors` 可从 `lerobot.policies` 导 |
+| 环境里取任务指令 | `lerobot.envs.utils.add_envs_task` | 已删除，改用 `env.call("task_description")` |
+| 策略的注册 | `factory.py` 里逐个 if/elif | 配置类 `@PreTrainedConfig.register_subclass` + 命名约定（`XConfig` → `modeling_*.XPolicy` / `processor_*.make_x_pre_post_processors`），内置策略靠 `lerobot/policies/__init__.py` 导入配置类注册 |
+| GR00T | N1.5 | N1.7 |
+| rerun-sdk | 0.26.2 | 0.33.1（浏览器 / 拉流端要用同一大版本） |
+| torch（锁文件） | 2.10 | 2.11（ARMv8.0 板子见上一节） |
+
+没变的：机器人 / 相机 / 第三方插件的注册方式；`robot_client` 与 `policy_server` 的命令行参数
+（工作坊那组实测两条线通用）；边录边编的逐帧统计（0.6 线仍是每帧都算，弱 CPU 板子上照旧是瓶颈）。
+
+⚠️ **板子与推理服务端必须用同一条线**：两端经 gRPC 互传 pickle 后的 LeRobot 对象，
+0.5 客户端连 0.6 服务端（或反过来）没有验证过。
 
 ## 跟上游的关系
 
-`upstream` = `huggingface/lerobot`。上游当前已到 v0.6.1，我们**有意停在 v0.5.1**：
-全部教学与实验代码都按这个版本验证过。v0.6.1 含破坏性改名（`lerobot.types` →
-`lerobot.lerobot_types`），要跟的话得单开一条分支重验。
-
-四个 commit 各自独立、按上面表格的顺序摞在 `v0.5.1` 上；两个 policy 的 commit
-都动 `factory.py`，顺序不可换。
+`upstream` = `huggingface/lerobot`。本分支是在上游 `v0.6.1` 上逐个重放 0.5 线的 commit 得到的
+（不 squash、无合并提交）；移植时改写过的 commit，提交说明里写了改了什么、为什么。
+上游再出新版时照同样的办法开新分支，0.5 / 0.6 两条线都保留。
