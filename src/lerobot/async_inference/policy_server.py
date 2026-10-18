@@ -42,7 +42,7 @@ import torch
 from lerobot.configs import PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import get_policy_class, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, RenameObservationsProcessorStep
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -101,6 +101,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = None
         self.actions_per_chunk = None
         self.policy = None
+        self.rename_map: dict[str, str] = {}
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
@@ -183,12 +184,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.preprocessor, self.postprocessor = make_pre_post_processors(
                 self.policy.config,
                 pretrained_path=policy_specs.pretrained_name_or_path,
-                preprocessor_overrides={
-                    "device_processor": device_override,
-                    "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-                },
+                preprocessor_overrides=_preprocessor_overrides(self.device, policy_specs.rename_map),
                 postprocessor_overrides={"device_processor": device_override},
             )
+        # Images are resized to the policy camera each robot camera is renamed to (see helpers).
+        self.rename_map = _rename_map_of(self.preprocessor)
 
         end = time.perf_counter()
 
@@ -371,6 +371,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             observation_t.get_observation(),
             self.lerobot_features,
             self.policy_image_features,
+            rename_map=self.rename_map,
         )
         prepare_time = time.perf_counter() - start_prepare
 
@@ -436,6 +437,31 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Stop the server"""
         self._reset_server()
         self.logger.info("Server stopping...")
+
+
+def _preprocessor_overrides(device: str, rename_map: dict[str, str]) -> dict[str, dict]:
+    """Overrides for the checkpoint's saved preprocessor.
+
+    Xbotics: the client's rename map replaces the checkpoint's only when the client sends one. The
+    robot client never fills it in, so overriding unconditionally threw away the rename a policy was
+    trained with (``--rename_map``) and its cameras could not be found.
+    """
+    overrides: dict[str, dict] = {"device_processor": {"device": device}}
+    if rename_map:
+        overrides["rename_observations_processor"] = {"rename_map": rename_map}
+    return overrides
+
+
+def _rename_map_of(preprocessor: PolicyProcessorPipeline) -> dict[str, str]:
+    """The camera rename the loaded preprocessor applies (empty when it has no rename step)."""
+    return next(
+        (
+            dict(step.rename_map)
+            for step in preprocessor.steps
+            if isinstance(step, RenameObservationsProcessorStep)
+        ),
+        {},
+    )
 
 
 @draccus.wrap()

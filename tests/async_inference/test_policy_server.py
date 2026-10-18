@@ -276,3 +276,26 @@ def test_send_observations_accepts_raw_frames(policy_server, monkeypatch):
     received = _upload(policy_server, monkeypatch, {"top": frame, "joint1": 0.5})
 
     np.testing.assert_array_equal(received["top"], frame)
+
+
+# ---------------------------------------------------------------- camera rename (Xbotics)
+
+
+def test_client_rename_map_overrides_the_checkpoint_only_when_given():
+    from lerobot.async_inference.policy_server import _preprocessor_overrides
+
+    assert _preprocessor_overrides("cuda", {}) == {"device_processor": {"device": "cuda"}}
+    rename = {"observation.images.top": "observation.images.camera_top"}
+    assert _preprocessor_overrides("cpu", rename)["rename_observations_processor"] == {"rename_map": rename}
+
+
+def test_rename_map_is_read_from_the_loaded_preprocessor():
+    from lerobot.async_inference.policy_server import _rename_map_of
+    from lerobot.processor import PolicyProcessorPipeline, RenameObservationsProcessorStep
+
+    rename = {"observation.images.top": "observation.images.camera_top"}
+    assert (
+        _rename_map_of(PolicyProcessorPipeline([RenameObservationsProcessorStep(rename_map=rename)]))
+        == rename
+    )
+    assert _rename_map_of(PolicyProcessorPipeline([])) == {}

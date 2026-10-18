@@ -513,3 +513,29 @@ def test_encoded_observation_survives_pickle():
     restored = pickle.loads(pickle.dumps(encoded))  # nosec
 
     assert restored["top"] == encoded["top"]
+
+
+def test_prepare_raw_observation_resizes_renamed_cameras_to_the_policy_shape():
+    """Xbotics: a policy trained with --rename_map knows its cameras by the renamed keys (lingbot_vla_v2:
+    top -> camera_top). The server's preprocessor renames later, so here each robot camera is resized to
+    the shape of the policy camera it will become, and keeps its robot key."""
+    robot_obs = _create_mock_robot_observation()
+    lerobot_features = _create_mock_lerobot_features()
+    policy_image_features = {
+        f"{OBS_IMAGES}.camera_top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        f"{OBS_IMAGES}.camera_wrist_left": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 160, 160)),
+    }
+    rename_map = {
+        f"{OBS_IMAGES}.laptop": f"{OBS_IMAGES}.camera_top",
+        f"{OBS_IMAGES}.phone": f"{OBS_IMAGES}.camera_wrist_left",
+    }
+
+    observation = raw_observation_to_observation(
+        robot_obs, lerobot_features, policy_image_features, rename_map=rename_map
+    )
+
+    assert observation[f"{OBS_IMAGES}.laptop"].shape == (1, 3, 224, 224)
+    assert observation[f"{OBS_IMAGES}.phone"].shape == (1, 3, 160, 160)
+    # Without the map the policy has no feature for the robot's camera names: the old failure.
+    with pytest.raises(KeyError):
+        raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)

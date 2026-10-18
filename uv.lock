@@ -3150,6 +3150,10 @@ lingbot-va = [
     { name = "diffusers" },
     { name = "transformers" },
 ]
+lingbot-vla-v2 = [
+    { name = "scipy" },
+    { name = "transformers" },
+]
 matplotlib-dep = [
     { name = "contourpy" },
     { name = "matplotlib" },
@@ -3413,6 +3417,7 @@ requires-dist = [
     { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["libero"], marker = "sys_platform == 'linux' and extra == 'all'" },
     { name = "lerobot", extras = ["lingbot-va"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["lingbot-vla-v2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'async'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'unitree-g1'" },
@@ -3456,6 +3461,7 @@ requires-dist = [
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'lingbot-vla-v2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'phone'" },
@@ -3474,6 +3480,7 @@ requires-dist = [
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'lingbot-va'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'lingbot-vla-v2'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'peft'" },
@@ -3553,7 +3560,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "evo1", "hilserl", "vla-jepa", "lingbot-va", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "evo1", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"

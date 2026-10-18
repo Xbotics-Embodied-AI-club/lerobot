@@ -23,6 +23,7 @@ from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
+from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as LingbotVLAV2Config
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
 from .openvla.configuration_openvla import OpenVLAConfig as OpenVLAConfig
@@ -53,6 +54,7 @@ __all__ = [
     "Evo1Config",
     "GrootConfig",
     "LingBotVAConfig",
+    "LingbotVLAV2Config",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",
     "OpenVLAConfig",

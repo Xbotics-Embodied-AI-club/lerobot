@@ -19,6 +19,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
@@ -30,13 +32,8 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
-    RelativeActionsProcessorStep,
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
+    load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -56,24 +53,6 @@ if TYPE_CHECKING or _peft_available:
 else:
     PeftConfig = None
     PeftModel = None
-
-
-def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
-) -> None:
-    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
-
-    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
-    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
-    the RelativeActionsProcessorStep so it can read the cached state at inference time.
-    That reference is not serializable, so we re-establish it here after loading.
-    """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -210,27 +189,37 @@ def make_pre_post_processors(
                 ),
             )
 
-        preprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
-            to_transition=batch_to_transition,
-            to_output=transition_to_batch,
-            revision=pretrained_revision,
+        preprocessor_config_filename = kwargs.get(
+            "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
         )
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-            revision=pretrained_revision,
+        postprocessor_config_filename = kwargs.get(
+            "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
         )
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        # Xbotics: a policy whose processor_* module defines make_<type>_pre_post_processors_from_pretrained
+        # rebuilds its saved pipelines itself (upstream main convention, #4701). On the 0.6 line only
+        # lingbot_vla_v2 does: a fine-tune maps a new robot onto its slots. groot keeps the branch above.
+        custom_processors = _make_pretrained_processors_from_policy_config(
+            config=policy_cfg,
+            pretrained_path=pretrained_path,
+            revision=pretrained_revision,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
+        if custom_processors is not None:
+            return custom_processors
+
+        preprocessor, postprocessor = load_pretrained_policy_processors(
+            pretrained_path,
+            revision=pretrained_revision,
+            preprocessor_overrides=kwargs.get("preprocessor_overrides", {}),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides", {}),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
@@ -446,6 +435,59 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
             f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
         )
     return policy_cls
+
+
+def _import_sibling_policy_module(config_cls: type[PreTrainedConfig], prefix: str) -> ModuleType | None:
+    """Import a config class' sibling ``{prefix}_*`` module, or None when that module does not exist.
+
+    Xbotics: copied from upstream main (#4701).
+    """
+    module_path = config_cls.__module__.replace("configuration_", f"{prefix}_")
+    try:
+        return importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The sibling module itself does not exist for this policy type. A missing optional
+            # dependency inside an existing module propagates unchanged instead, so its
+            # actionable install hint stays visible.
+            return None
+        raise
+
+
+def _make_pretrained_processors_from_policy_config(
+    config: PreTrainedConfig,
+    pretrained_path: str | Path,
+    *,
+    revision: str | None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
+    dataset_meta: Any | None,
+    preprocessor_overrides: dict[str, Any] | None,
+    postprocessor_overrides: dict[str, Any] | None,
+    preprocessor_config_filename: str,
+    postprocessor_config_filename: str,
+) -> tuple[Any, Any] | None:
+    """Let a policy rebuild pretrained processors when its current runtime requires it.
+
+    Xbotics: copied from upstream main (#4701).
+    """
+    function_name = f"make_{config.type}_pre_post_processors_from_pretrained"
+    module = _import_sibling_policy_module(config.__class__, "processor")
+    if module is None:
+        return None
+    function = getattr(module, function_name, None)
+    if function is None:
+        return None
+    return function(
+        config=config,
+        pretrained_path=pretrained_path,
+        revision=revision,
+        dataset_stats=dataset_stats,
+        dataset_meta=dataset_meta,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
 
 
 def _make_processors_from_policy_config(

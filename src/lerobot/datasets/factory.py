@@ -23,7 +23,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
@@ -32,9 +32,15 @@ from .streaming_dataset import StreamingLeRobotDataset
 
 
 def resolve_delta_timestamps(
-    cfg: PreTrainedConfig | RewardModelConfig, ds_meta: LeRobotDatasetMetadata
-) -> dict[str, list] | None:
+    cfg: PreTrainedConfig | RewardModelConfig,
+    ds_meta: LeRobotDatasetMetadata,
+    rename_map: dict[str, str] | None = None,
+) -> dict[str, list[float]] | None:
     """Resolves delta_timestamps by reading from the 'delta_indices' properties of the config.
+
+    Xbotics: copied from upstream main (per-modality indices and ``rename_map``) so lingbot_vla_v2
+    gets the current and future frame of each camera; policies without the per-modality
+    properties keep the shared observation indices, as before.
 
     Args:
         cfg (PreTrainedConfig | RewardModelConfig): The config to read delta_indices from. Both
@@ -44,24 +50,56 @@ def resolve_delta_timestamps(
             delta_timestamps against.
 
     Returns:
-        dict[str, list] | None: A dictionary of delta_timestamps, e.g.:
+        dict[str, list[float]] | None: A dictionary of delta_timestamps, e.g.:
             {
                 "observation.state": [-0.04, -0.02, 0]
                 "observation.action": [-0.02, 0, 0.02]
             }
             returns `None` if the resulting dict is empty.
     """
-    delta_timestamps = {}
+    # Only policies that opt into modality-specific history (currently Pi05 with MEM)
+    # define these; everything else falls back to the shared observation indices.
+    explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
+    image_indices = (
+        explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
+    )
+    explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
+    state_indices = (
+        explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
+    )
+
+    delta_timestamps: dict[str, list[float]] = {}
+    matched_image_keys: list[str] = []
     for key in ds_meta.features:
-        if key == REWARD and cfg.reward_delta_indices is not None:
+        policy_key = (rename_map or {}).get(key, key)
+        if policy_key == REWARD and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
-        if key == ACTION and cfg.action_delta_indices is not None:
+        if policy_key == ACTION and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
-        if key.startswith(OBS_PREFIX) and cfg.observation_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+        # `OBS_IMAGE` matches both the `observation.image` and `observation.images.<cam>`
+        # conventions; matching `OBS_IMAGES` alone would silently give singular-key
+        # datasets no image history at all.
+        if policy_key.startswith(OBS_IMAGE):
+            indices = image_indices
+            matched_image_keys.append(key)
+        elif policy_key == OBS_STATE:
+            indices = state_indices
+        else:
+            indices = cfg.observation_delta_indices if policy_key.startswith(OBS_PREFIX) else None
+        if indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in indices]
+
+    # A policy asking for an image history that no dataset key can supply would train
+    # on single frames without any error, so fail instead of degrading silently.
+    if explicit_image_indices is not None and len(explicit_image_indices) > 1 and not matched_image_keys:
+        raise ValueError(
+            f"{type(cfg).__name__} requests {len(explicit_image_indices)} history frames per camera, but no "
+            f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
+            "Image keys must be named `observation.image*` after applying `--rename_map`."
+        )
 
     if len(delta_timestamps) == 0:
-        delta_timestamps = None
+        return None
 
     return delta_timestamps
 

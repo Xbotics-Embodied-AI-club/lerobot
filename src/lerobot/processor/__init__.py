@@ -43,6 +43,7 @@ from .device_processor import DeviceProcessorStep
 from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
     DefaultPolicyProcessorSteps,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_default_pre_post_processors,
     make_default_processors,
@@ -140,6 +141,7 @@ __all__ = [
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "load_pretrained_policy_processors",
     "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",

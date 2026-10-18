@@ -2436,3 +2436,77 @@ def test_initial_camera_not_overridden_by_step_image():
     key = f"{OBS_IMAGES}.front"
     assert key in out
     assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+
+
+# ---------------------------------------------------------------- processor artifacts
+# Xbotics: the artifact mechanism is copied from upstream main (#4182) for lingbot_vla_v2, whose
+# checkpoints ship image_processor/, chat_template_tokenizer/ and tokenizer/ next to the configs.
+
+
+@ProcessorStepRegistry.register("xbotics_artifact_step")
+@dataclass
+class ArtifactStep(ProcessorStep):
+    """Reads a text asset from a directory; saves that directory as a checkpoint artifact."""
+
+    asset_dir: str | None = None
+    payload: str = "hello"
+    artifact_name: str = "assets"
+    loaded: str | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self.asset_dir is not None:
+            self.loaded = (Path(self.asset_dir) / "asset.txt").read_text()
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {"asset_dir": self.asset_dir, "payload": self.payload, "artifact_name": self.artifact_name}
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        target = save_directory / self.artifact_name
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "asset.txt").write_text(self.payload)
+        return {"asset_dir": self.artifact_name}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+def _save_artifact_pipeline(directory: Path, **step_kwargs) -> None:
+    DataProcessorPipeline(
+        [ArtifactStep(**step_kwargs)], to_transition=identity_transition, to_output=identity_transition
+    ).save_pretrained(directory)
+
+
+def test_artifacts_are_saved_relative_and_resolved_where_the_checkpoint_is(tmp_path):
+    saved = tmp_path / "saved"
+    _save_artifact_pipeline(saved, payload="tokenizer files")
+    step_entry = json.loads((saved / "dataprocessorpipeline.json").read_text())["steps"][0]
+    assert step_entry["config"]["asset_dir"] == "assets"
+    assert step_entry["artifacts"] == {"asset_dir": "assets"}
+
+    # The checkpoint is portable: move it and the artifact resolves against the new location.
+    moved = tmp_path / "moved"
+    saved.rename(moved)
+    loaded = DataProcessorPipeline.from_pretrained(
+        moved, config_filename="dataprocessorpipeline.json", to_transition=identity_transition
+    )
+    assert loaded.steps[0].asset_dir == str(moved / "assets")
+    assert loaded.steps[0].loaded == "tokenizer files"
+
+
+def test_artifact_paths_must_stay_inside_the_checkpoint(tmp_path):
+    with pytest.raises(ValueError, match="relative to the checkpoint"):
+        _save_artifact_pipeline(tmp_path / "saved", artifact_name="../outside")
+
+
+def test_missing_artifact_fails_loudly_on_load(tmp_path):
+    saved = tmp_path / "saved"
+    _save_artifact_pipeline(saved)
+    (saved / "assets" / "asset.txt").unlink()
+    (saved / "assets").rmdir()
+    with pytest.raises(FileNotFoundError, match="Missing processor artifact 'assets'"):
+        DataProcessorPipeline.from_pretrained(saved, config_filename="dataprocessorpipeline.json")

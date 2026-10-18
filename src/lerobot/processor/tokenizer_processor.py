@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -292,6 +293,18 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             config["tokenizer_name"] = self.tokenizer_name
 
         return config
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the tokenizer so object-provided instances reload without overrides.
+
+        Xbotics: processor artifacts copied from upstream main (#4182).
+        """
+        artifact_path = Path("tokenizer")
+        save_pretrained = getattr(self.input_tokenizer, "save_pretrained", None)
+        if save_pretrained is None:
+            raise TypeError("Tokenizer must implement save_pretrained() to save a portable pipeline.")
+        save_pretrained(save_directory / artifact_path)
+        return {"tokenizer_name": artifact_path.as_posix()}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

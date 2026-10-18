@@ -45,6 +45,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
+{% elif model_name == "lingbot_vla_v2" %}
+[LingBot-VLA 2.0](https://github.com/Robbyant/lingbot-vla-v2) is a cross-embodiment Vision-Language-Action policy that pairs a Qwen3-VL-4B backbone with a sparse-MoE Qwen2 action expert, predicting action chunks via flow matching over a unified 55-D canonical state/action space.
 {% endif %}
 {% set diagrams = {
   "smolvla": "https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png",

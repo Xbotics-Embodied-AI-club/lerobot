@@ -22,6 +22,7 @@ denoising loop (with its real-time-chunking hook) that the openpi-derived polici
 stateless; adopting them does not affect checkpoints.
 """
 
+import enum
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,100 @@ from torch import Tensor
 
 if TYPE_CHECKING:
     from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+
+
+# Xbotics：以下两项照搬上游 main（#4075、#4631），LingBot-VLA 2.0（lingbot_vla_v2）训练时用；
+# 0.6 线的其他策略仍走各自原来的写法，没有迁过来。
+class FlowConvention(str, enum.Enum):  # noqa: UP042 —— 照搬上游逐字；StrEnum 的 str() 与之不同
+    """Which end of the ``[0, 1]`` schedule holds the noise.
+
+    Both conventions describe the same family of probability paths, they only disagree on
+    the direction of time (and therefore on the sign of the velocity field). A checkpoint is
+    tied to the convention it was trained with, so this is a property of the policy, never a
+    tunable.
+    """
+
+    NOISE_AT_ONE = "noise_at_one"
+    """openpi (pi0, pi05, smolvla, eo1): ``x_1`` is noise, integrate ``t: 1 -> 0``.
+
+    ``dt = -1/num_steps``, ``time = 1.0 + step * dt``, and the clean sample is
+    ``x_0 = x_t - time * v_t``.
+    """
+
+    NOISE_AT_ZERO = "noise_at_zero"
+    """groot / evo1 / wall_x: ``x_0`` is noise, integrate ``t: 0 -> 1``.
+
+    ``dt = +1/num_steps``, ``time = step * dt``, and the clean sample is
+    ``x_1 = x_t + (1 - time) * v_t``.
+    """
+
+
+def make_flow_matching_inputs(
+    actions: Tensor,
+    noise: Tensor,
+    time: Tensor,
+    *,
+    convention: FlowConvention,
+    prefix_mask: Tensor | None = None,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Build the noised actions, velocity target and model timesteps for a training step.
+
+    The interpolation is linear between the two endpoints of the probability path, and
+    ``convention`` (see :class:`FlowConvention`) decides which endpoint the noise sits at,
+    and therefore both the interpolation and the sign of the velocity target:
+
+    * ``NOISE_AT_ONE``: ``x_t = t * noise + (1 - t) * actions`` and ``v = noise - actions``.
+    * ``NOISE_AT_ZERO``: ``x_t = (1 - t) * noise + t * actions`` and ``v = actions - noise``.
+
+    This is the training-time half of the contract that :func:`euler_integrate` implements at
+    inference time. Nothing here checks that the two agree: a policy that passes different
+    conventions to each learns a velocity pointing the wrong way along its own schedule.
+
+    The returned target is computed in the dtype of ``actions`` and ``noise``. A caller that
+    regresses in a different precision than it interpolates in (evo1) has to build its own.
+
+    Args:
+        actions: ``(batch, horizon, action_dim)`` clean action chunk.
+        noise: Noise sample broadcastable to ``actions``.
+        time: ``(batch,)`` timesteps.
+        convention: Which end of the schedule holds the noise.
+        prefix_mask: Optional ``(batch, horizon)`` boolean mask marking clean action-prefix
+            positions (real-time chunking). Masked positions are given the model time at the
+            clean end of the schedule, which makes the interpolation return the clean action
+            there, so they are never noised. The inference-time counterpart is
+            ``euler_integrate``'s ``hard_prefix`` / ``hard_prefix_mask``.
+
+    Returns:
+        ``(x_t, velocity_target, model_time)``: the noised actions fed to the network, the
+        regression target for the predicted velocity, and the timesteps fed to the network.
+        ``model_time`` is ``(batch,)`` without a prefix and ``(batch, horizon)`` with one.
+    """
+    if not isinstance(convention, FlowConvention):
+        raise TypeError(f"convention must be a FlowConvention, got {convention!r}")
+    if time.shape != actions.shape[:1]:
+        raise ValueError(f"time must have shape (batch,), got {tuple(time.shape)}")
+    if prefix_mask is not None and prefix_mask.shape != actions.shape[:2]:
+        raise ValueError(f"prefix_mask must have shape (batch, horizon), got {tuple(prefix_mask.shape)}")
+    noise_at_one = convention is FlowConvention.NOISE_AT_ONE
+
+    if prefix_mask is None:
+        model_time = time
+        expanded_time = time[:, None, None]
+    else:
+        # Clean tokens sit at the far end of the schedule from the noise.
+        clean_time = 0.0 if noise_at_one else 1.0
+        model_time = time[:, None].expand_as(prefix_mask)
+        model_time = torch.where(prefix_mask, torch.full_like(model_time, clean_time), model_time)
+        expanded_time = model_time.unsqueeze(-1)
+
+    if noise_at_one:
+        x_t = expanded_time * noise + (1 - expanded_time) * actions
+        velocity_target = noise - actions
+    else:
+        x_t = (1 - expanded_time) * noise + expanded_time * actions
+        velocity_target = actions - noise
+
+    return x_t, velocity_target, model_time
 
 
 def sample_beta(alpha: float, beta: float, bsize: int, device) -> Tensor:  # see openpi (exact copy)

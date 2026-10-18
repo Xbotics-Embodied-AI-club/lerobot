@@ -36,6 +36,7 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(async_inference)` | **观测压 JPEG + 后台发送**，见下「远程推理」。 |
 | `feat(datasets)` | **瑞芯微 MPP 硬件编码**（`h264_rkmpp`）与**边录边编的统计抽样**（`stats_every`），见下「接臂板子录数据」。 |
 | `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
+| `feat(policies)` | **LingBot-VLA 2.0**（`--policy.type=lingbot_vla_v2`，蚂蚁灵波）。只在 0.6 线，见下「LingBot-VLA 2.0」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -86,6 +87,71 @@ PEFT 续训适配器被冻与重复包装（上游两处都修了）。
 - 录数据建议加 `--dataset.streaming_encoding=true`（边录边编，存盘几乎不用等）；不加时画面先存 PNG、每段结束再用 MPP 编。
 - 「有没有桌面」按显示服务是否真在跑来判：本机显示 `DISPLAY=:N` 要有 `/tmp/.X11-unix/XN`，Wayland 要有它的 socket；远端显示（如 SSH 转发的 `localhost:10.0`）照信。板子厂家镜像在每个登录 shell 里写死 `DISPLAY=:0`，桌面关了也照设，网页终端又是登录 shell —— 只看变量就会去拉原生查看器，拉不起来时 rerun 把每帧原图攒在内存里，一分多钟吃光 4 GB 被系统杀掉。录制时的按键监听（`n` / `r` / `q`）用同一个判断，网页终端里按键才管用。
 - GStreamer 编码子进程的标准输出接到 `/dev/null`：接着终端时 `gst-launch-1.0` 每秒刷好多行管道位置（`-q` 关不掉），网页终端会被刷屏。
+
+## LingBot-VLA 2.0（`lingbot_vla_v2`，只在 0.6 线）
+
+蚂蚁灵波（Robbyant）开源的 6B VLA：Qwen3-VL-4B 骨干 + 稀疏 MoE 的 Qwen2 动作专家，flow matching 出动作块，
+各种机器人都映射到统一的 55 维状态 / 动作槽位上。策略代码取自上游 LeRobot **待合并**的 PR
+[#4897](https://github.com/huggingface/lerobot/pull/4897)（head `de61f262`，官方维护者在社区移植 #3967 的基础上重做，
+权重逐张量与原版核对过），`src/lerobot/policies/lingbot_vla_v2/` 与它的测试、文档**逐字未改**；
+转换好的权重直接用上游发布的 `lerobot/lingbot_vla_v2_base`（微调起点）与 `lerobot/lingbot_vla_v2_robotwin`。
+
+```toml
+# uv 项目里装：多加 lingbot_vla_v2 组
+dependencies = ["lerobot[lingbot_vla_v2,training,dataset]"]
+```
+
+SO-101（5 个关节 + 夹爪，`top` / `wrist` 两路相机）微调：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=<数据集> \
+  --policy.path=lerobot/lingbot_vla_v2_base \
+  --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
+  --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
+  --policy.device=cuda --policy.dtype=bfloat16 --policy.push_to_hub=false --batch_size=1 --steps=30000
+```
+
+⚠️ `--policy.device=cuda` 要写：`lerobot/lingbot_vla_v2_base` 的 config.json 里记的是 `device: cpu`，不写就在 CPU 上训，不报错，只是每步十几秒。
+
+显存不够时加 `--policy.train_expert_only=true --policy.gradient_checkpointing=true`（只训动作专家）。
+微调出来的模型照常由 `policy_server` 加载，板子上 `robot_client --policy_type=lingbot_vla_v2`。
+完整参数、推理加速开关见 `docs/source/lingbot_vla_v2.mdx`。
+
+本线上实测（2026-10-18，server 与别的任务共用；数据 = SO-101 真机「把方块放进盒子」300 集，5 关节 + 夹爪，`top` / `wrist`）：
+
+| 项 | 结果 |
+|---|---|
+| 基础权重按 SO-101 槽位加载、真帧出动作 | 6 维、全有限；GPU 每块 50 步约 0.9 s（fp32、不开加速），CPU 约 10 s |
+| `lerobot-train` 短微调（只训动作专家 + 梯度检查点 + bf16 + batch 1，蒸馏开，200 步） | 每步约 0.55 s、显存 26.9 GB；四项蒸馏损失一路降（深度 3.23→1.03 等），动作损失在这个量级下看不出降 |
+| 微调出的检查点 → `policy_server` → RK3566 板子 `robot_client`（板子上没升级、不加参数） | 动作 29.0 Hz、间隔中位 33.5 ms / p95 45 ms；服务端单次推理中位 0.29 s（bf16）、加载 60 s |
+
+上游 PR 依赖 v0.6.1 之后 main 上的几处改动，本线只补了它用到的那部分，均照搬上游；除了下面「存出来的格式」那一条，其他策略的行为不变：
+
+| 补的 | 上游出处 | 作用 |
+|---|---|---|
+| `flow_matching.FlowConvention` / `make_flow_matching_inputs` | #4075、#4631 | 训练时构造加噪动作与速度目标（其他策略仍走各自原写法） |
+| 处理流水的「产物」（`ProcessorStep.save_artifacts`、加载时 `_resolve_artifact_paths`） | #4182 | 权重目录里带的 `image_processor/`、`chat_template_tokenizer/`、`tokenizer/` 按相对路径存、加载时就地解析，从 Hub 加载时自动下载这几个子目录 |
+| `TokenizerProcessorStep.save_artifacts` | #4182 | 分词器随前后处理一起存进权重目录 |
+| `load_pretrained_policy_processors`、按约定调用 `make_<类型>_pre_post_processors_from_pretrained` | #4701 | 从权重加载前后处理时，让策略自己换上新机器人的槽位映射 |
+| `PreTrainedConfig` 注册 `torch.dtype` 的 draccus 编解码（不加基类字段） | main | 策略配置里的 `dtype` 能存能读 |
+| `resolve_delta_timestamps` 认按模态给的帧序（`image_observation_delta_indices` 等）与 `rename_map` | main | 训练时给每路相机取当前帧与 49 帧后的帧（深度 / 视频蒸馏要用）；没定义这些属性的策略照旧 |
+| `async_inference` 白名单加 `lingbot_vla_v2` | — | 推理服务端能加载它 |
+| 远程推理认得训练时的相机改名 | 本线自修（上游 main 已删掉整个 `async_inference`） | 见下 |
+
+**远程推理与相机改名。** 上游 0.6.1 的 `policy_server` 无条件用客户端发来的改名表覆盖权重里存的那份，
+而 `robot_client` 从来不填（恒为空）；缩放图像时又按策略自己的相机名去找尺寸。于是**训练时用过 `--rename_map` 的策略都没法远程推理**
+（LingBot-VLA 2.0 的相机必须叫 `camera_top` / `camera_wrist_left`，服务端每帧报 `KeyError: 'observation.images.top'`）。
+本线改为：客户端真给了改名表才覆盖，否则用权重里存的；缩放按实际生效的改名表找尺寸，图像仍由前处理去改名。
+没用改名训练的策略行为不变，板子上的客户端不用升级。
+
+⚠️ **存出来的格式变了一点**：本线起，带分词器的策略（SmolVLA、π0 / π0.5 等）存前后处理时会把分词器一并存进权重目录的
+`tokenizer/` 子目录、配置里记相对路径（与上游 main 一致）。这样存的权重用本线或上游 main 读没问题；用原版 0.6.1 读会找不到分词器。
+以前存的权重不受影响。
+
+许可证：代码与转换后的权重是 Apache-2.0。**训练**时的深度 / 视频蒸馏要下载三个冻结的教师模型，其中 DINO-Video 来自 Meta 的 DINOv3，
+受 DINOv3 License 约束（发表要致谢 DINOv3、限制部分用途）；**推理**不加载教师模型。
 
 ## 仿真器是独立仓
 

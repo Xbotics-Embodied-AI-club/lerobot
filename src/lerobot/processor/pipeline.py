@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, TypedDict, TypeVar, cast
 
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
@@ -193,6 +193,13 @@ class ProcessorStep(ABC):
 
         Returns:
             A JSON-serializable dictionary of configuration parameters.
+        """
+        return {}
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save non-tensor assets and map constructor arguments to relative paths.
+
+        Xbotics: processor artifacts copied from upstream main (#4182); used by lingbot_vla_v2.
         """
         return {}
 
@@ -556,6 +563,22 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         pipeline_config = self.get_config()
         pipeline_state_dict = self.state_dict()
 
+        for processor_step, step_entry in zip(self.steps, pipeline_config["steps"], strict=True):
+            artifacts = processor_step.save_artifacts(save_directory)
+            if artifacts:
+                for config_key, relative_path in artifacts.items():
+                    artifact_path = Path(relative_path)
+                    if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                        raise ValueError(
+                            f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                        )
+                    if not (save_directory / artifact_path).exists():
+                        raise FileNotFoundError(
+                            f"Processor step did not save declared artifact '{relative_path}'"
+                        )
+                    step_entry["config"][config_key] = artifact_path.as_posix()
+                step_entry["artifacts"] = artifacts
+
         for state_key, step_state_dict in pipeline_state_dict.items():
             state_filename = f"{state_key}.safetensors"
             save_file(step_state_dict, save_directory / state_filename)
@@ -740,7 +763,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs, is_local_source
+            loaded_config,
+            overrides or {},
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+            is_local_source,
         )
 
         # 4. Validate that all overrides were used
@@ -930,12 +959,64 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             )
 
     @classmethod
+    def _resolve_artifact_paths(
+        cls,
+        loaded_config: dict[str, Any],
+        model_id: str,
+        base_path: Path | None,
+        config_filename: str,
+        hub_download_kwargs: dict[str, Any],
+    ) -> None:
+        """Resolve declared relative processor artifacts before step construction.
+
+        Args:
+            loaded_config: Mutable processor configuration containing step artifact declarations.
+            model_id: Local checkpoint path or Hub model identifier.
+            base_path: Local directory containing the resolved processor configuration.
+            config_filename: Processor config path, whose parent is the artifact root on the Hub.
+            hub_download_kwargs: Authentication, revision, and cache arguments for Hub downloads.
+
+        Raises:
+            ValueError: If a declared artifact path is absolute or escapes the checkpoint.
+            FileNotFoundError: If a declared artifact cannot be found locally or downloaded.
+        """
+        is_local = Path(model_id).is_dir() or Path(model_id).is_file()
+
+        for step_entry in loaded_config["steps"]:
+            artifacts = step_entry.get("artifacts", {})
+            for config_key, relative_path in artifacts.items():
+                artifact_path = Path(relative_path)
+                if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                    raise ValueError(
+                        f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                    )
+
+                resolved_path = base_path / artifact_path if base_path is not None else artifact_path
+                if not resolved_path.exists() and not is_local:
+                    repository_path = Path(config_filename).parent / artifact_path
+                    snapshot_download(
+                        repo_id=model_id,
+                        repo_type="model",
+                        allow_patterns=f"{repository_path.as_posix()}/**",
+                        **hub_download_kwargs,
+                    )
+
+                if not resolved_path.exists():
+                    step_name = step_entry.get("registry_name", step_entry.get("class", "unknown"))
+                    raise FileNotFoundError(
+                        f"Missing processor artifact '{relative_path}' for step '{step_name}' "
+                        f"next to '{config_filename}'. Checkpoint artifacts are incomplete."
+                    )
+                step_entry["config"][config_key] = str(resolved_path)
+
+    @classmethod
     def _build_steps_with_overrides(
         cls,
         loaded_config: dict[str, Any],
         overrides: dict[str, Any],
         model_id: str,
         base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
         is_local_source: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
@@ -990,6 +1071,15 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ImportError: If a step class cannot be imported or found in registry
             ValueError: If a step cannot be instantiated with its configuration
         """
+        # Xbotics: resolve declared processor artifacts first (upstream main, #4182).
+        loaded_config = deepcopy(loaded_config)
+        cls._resolve_artifact_paths(
+            loaded_config,
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+        )
         steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
 
         for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):

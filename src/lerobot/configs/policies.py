@@ -16,12 +16,14 @@ import builtins
 import json
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
 from typing import Any, TypeVar
 
 import draccus
+import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
@@ -81,6 +83,29 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_path: Path | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
+
+    # Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
+    # Xbotics: copied from upstream main (without its base-class ``dtype`` field) so policies that
+    # declare their own dtype field (lingbot_vla_v2) can save and reload their config.
+    @staticmethod
+    @draccus.decode.register(torch.dtype)
+    def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+        """Resolve a dtype name coming from config.json or the command line.
+
+        Args:
+            value: The raw serialized value, e.g. "bfloat16".
+            path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
+        """
+        dtype = getattr(torch, str(value).removeprefix("torch."), None)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+        return dtype
+
+    @staticmethod
+    @draccus.encode.register(torch.dtype)
+    def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+        """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
+        return str(value).removeprefix("torch.")
 
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
