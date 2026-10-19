@@ -5,14 +5,19 @@
 # 插哪个口就叫哪个名字，换相机不用改规则。名字都在 /dev/xbotics/ 下：
 #
 #   /dev/xbotics/follower   从臂舵机：板载串口（设备树节点 fe6b0000.serial，系统里叫 ttyS3）
+#   /dev/xbotics/leader     主臂舵机：板载串口（设备树节点 fe6a0000.serial，系统里叫 ttyS1）
 #   /dev/xbotics/top        顶视相机：xhci-hcd.4 控制器的 1 号 USB 口
+#   /dev/xbotics/wrist      腕部相机：xhci-hcd.7 控制器的 1 号 USB 口
 #
 # 只适用于这一款板子：别的板子的串口地址、USB 控制器名字不一样，照 XBOTICS.md 里的办法读出来另写一份。
 # 安装、检查与用法见 XBOTICS.md「端侧板：按接口位置固定设备名」。
 
-# 从臂舵机（Feetech 总线，1 Mbps）。板载串口不热插拔，名字跟着串口控制器的硬件地址走。
+# 两条臂的舵机（Feetech 总线，1 Mbps）。板载串口不热插拔，名字跟着串口控制器的硬件地址走：
+# 认的是「插在哪个串口座上」，不是哪条臂 —— 主臂插到从臂的座上，它就叫 follower。
 SUBSYSTEM=="tty", KERNELS=="fe6b0000.serial", SYMLINK+="xbotics/follower"
+SUBSYSTEM=="tty", KERNELS=="fe6a0000.serial", SYMLINK+="xbotics/leader"
 
 # 相机。ID_PATH 由系统自带的 60-persistent-v4l.rules 按接口路径算出（与 /dev/v4l/by-path/ 同一个来源）；
 # 一只 UVC 相机出两个节点，index 0 是出画面的那个，另一个只有元数据。
 SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.4.auto-usb-0:1:1.0", SYMLINK+="xbotics/top"
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.7.auto-usb-0:1:1.0", SYMLINK+="xbotics/wrist"

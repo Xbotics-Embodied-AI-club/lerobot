@@ -37,7 +37,7 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(datasets)` | **瑞芯微 MPP 硬件编码**（`h264_rkmpp`）与**边录边编的统计抽样**（`stats_every`），见下「接臂板子录数据」。 |
 | `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
 | `feat(policies)` | **LingBot-VLA 2.0**（`--policy.type=lingbot_vla_v2`，蚂蚁灵波）。只在 0.6 线，见下「LingBot-VLA 2.0」。 |
-| `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：从臂串口、顶视相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
+| `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：主从两条臂的串口、顶视与腕部两路相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -228,9 +228,12 @@ BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robot
 | 固定名字 | 是什么 | 按什么匹配 |
 |---|---|---|
 | `/dev/xbotics/follower` | 从臂舵机（板载串口，系统里叫 `ttyS3`） | 串口控制器的设备树节点 `fe6b0000.serial` |
+| `/dev/xbotics/leader` | 主臂舵机（板载串口，系统里叫 `ttyS1`） | 串口控制器的设备树节点 `fe6a0000.serial` |
 | `/dev/xbotics/top` | 顶视相机 | USB 接口路径 `platform-xhci-hcd.4.auto-usb-0:1:1.0`（xhci-hcd.4 控制器的 1 号口） |
+| `/dev/xbotics/wrist` | 腕部相机 | USB 接口路径 `platform-xhci-hcd.7.auto-usb-0:1:1.0`（xhci-hcd.7 控制器的 1 号口） |
 
-腕部相机的口还没定，定了再加一行。只适用于 ZTL A566 这一款板子。
+认的是**口**，不是设备：主臂插到从臂的串口座上，它就叫 `follower`；顶视相机插到腕部的 USB 口上，它就叫 `wrist`。
+设备拔掉，对应的名字随之消失。只适用于 ZTL A566 这一款板子。
 
 装（板子上，root）：
 
@@ -242,11 +245,11 @@ udevadm trigger --action=add --subsystem-match=tty --subsystem-match=video4linux
 ls -l /dev/xbotics/
 ```
 
-最后一行应当列出 `follower -> ../ttyS3`、`top -> ../videoN`。之后命令里直接写这些名字：
-`--robot.port=/dev/xbotics/follower`，相机 `index_or_path: /dev/xbotics/top`。
+最后一行列出当前插着的设备，四样都插上时是 `follower -> ../ttyS3`、`leader -> ../ttyS1`、`top`、`wrist` 各指向一个 `videoN`。之后命令里直接写这些名字：
+`--robot.port=/dev/xbotics/follower`、`--teleop.port=/dev/xbotics/leader`，相机 `index_or_path: /dev/xbotics/top`、`/dev/xbotics/wrist`。
 
-实测（2026-10-19，ZTL A566）：经固定名字，从臂 6 个 STS3215 在 1 Mbps 下全部读到（同步读位置 300 次 0 失败、中位 1.3 ms）；
-顶视相机出 640×480、约 29 fps。
+实测（2026-10-19，ZTL A566）：经固定名字，两个板载串口上的 6 个 STS3215 在 1 Mbps 下都全部读到（同步读位置 300 次 0 失败、中位 1.3 ms）；
+两路 USB 相机各出 640×480、约 29 fps；相机拔掉后它的名字随之消失。
 
 **换一款板子**：这份规则只认这款板子的串口地址和 USB 控制器名。把设备插好，读出位置再照着写一份：
 
