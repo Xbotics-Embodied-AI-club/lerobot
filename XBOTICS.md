@@ -38,6 +38,7 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
 | `feat(policies)` | **LingBot-VLA 2.0**（`--policy.type=lingbot_vla_v2`，蚂蚁灵波）。只在 0.6 线，见下「LingBot-VLA 2.0」。 |
 | `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：主从两条臂的串口、顶视与腕部两路相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
+| `feat(board)` | **端侧板配网页**（RK3566）：板子一直开着热点，连上后在浏览器里给板子连 Wi-Fi、设网线，结果实时显示，见下「端侧板：配网页」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -257,6 +258,42 @@ ls -l /dev/xbotics/
 udevadm info -q property -n /dev/videoN | grep '^ID_PATH='                 # 相机：取 index 为 0 的那个节点
 udevadm info -a -n /dev/ttyS3 | grep -m1 'KERNELS==".*\.serial"'           # 板载串口
 ```
+
+## 端侧板：配网页（RK3566）
+
+[`xbotics/provision/`](xbotics/provision/) 让板子一直开着一个热点 `Xbotics-XXXX`（后四位取自板子 Wi-Fi 网卡的地址，每块板不同），
+电脑或手机连上它，系统会弹出配网页（没弹就在浏览器里打开 `http://10.42.0.1`）。页面上能给板子连 Wi-Fi、设网线（自动获取或固定 IP），
+网线、Wi-Fi、热点三样的状态和能不能上外网每两秒刷新一次。热点不设密码、不通外网，只给这个页面用；
+同一个页面在局域网里打开 `http://<板子IP>/` 也能用。
+
+- **热点为什么一直开着**：AIC8800 能一边开热点一边连 Wi-Fi（`iw list`：热点与连 Wi-Fi 各一个接口，两者可在不同信道）。
+  板子去连 Wi-Fi 时热点不断，连没连上、拿到什么地址都在页面上看得到；连错了也还能从热点进来改。
+- **怎么弹出来的**：热点的 DNS 把所有域名都答成板子自己（`xbotics-captive.conf`），页面服务把其他网址一律跳到配网页；
+  再关掉热点接口的转发，连上的设备检测联网失败，系统就弹出这个页面。
+- 只用系统自带的 Python 3 标准库和 `nmcli`，另装一个 `iw` 建热点用的虚拟接口 `ap0`；占用 80 端口。
+
+装（板子上，root）：
+
+```bash
+apt-get install -y iw
+base=https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/provision
+mkdir -p /opt/xbotics/provision /etc/NetworkManager/dnsmasq-shared.d
+curl -fsSL $base/xbotics_provision.py -o /opt/xbotics/provision/xbotics_provision.py
+curl -fsSL $base/index.html -o /opt/xbotics/provision/index.html
+curl -fsSL $base/xbotics-captive.conf -o /etc/NetworkManager/dnsmasq-shared.d/xbotics-captive.conf
+curl -fsSL $base/xbotics-provision.service -o /etc/systemd/system/xbotics-provision.service
+systemctl daemon-reload
+systemctl enable --now xbotics-provision
+```
+
+NetworkManager 1.36 的两个坑，代码里已绕开：
+
+- 连接失败时 `nmcli` 照样退出码 0 ⇒ 成败看网卡实际连上了哪条连接。
+- 对已保存的 Wi-Fi 直接 `nmcli device wifi connect … password …` 会把旧配置的密码改掉，输错一次原来能用的也坏了 ⇒
+  先用临时配置名 `xbotics-try` 试连，成了再顶替旧的，没成就删掉临时的、换回旧的。
+
+实测（2026-10-19，ZTL A566）：热点开着时连 Wi-Fi、输错密码、删 Wi-Fi、改网线固定 IP，热点一次没断；输错密码不坏旧配置；
+带 Android、Apple、Windows 联网检测地址的请求都跳到配网页；重启后热点、页面、Wi-Fi 与网线设置都自动恢复。
 
 ## 从 0.5 线迁到 0.6 线要改什么
 
