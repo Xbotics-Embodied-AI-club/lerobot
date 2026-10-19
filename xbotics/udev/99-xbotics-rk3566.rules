@@ -1,0 +1,18 @@
+# Xbotics 星禾套件 · RK3566 端侧板（ZTL A566）：按硬件接口位置给机械臂串口和相机起固定名字。
+#
+# 板子上的设备号靠不住：USB 相机按枚举顺序拿到 /dev/videoN，换个口、重启一次都可能变。
+# 这里按「插在板子的哪个口」匹配，不按序号，也不按相机型号或序列号 —— 两只同型号的相机
+# 插哪个口就叫哪个名字，换相机不用改规则。名字都在 /dev/xbotics/ 下：
+#
+#   /dev/xbotics/follower   从臂舵机：板载串口（设备树节点 fe6b0000.serial，系统里叫 ttyS3）
+#   /dev/xbotics/top        顶视相机：xhci-hcd.4 控制器的 1 号 USB 口
+#
+# 只适用于这一款板子：别的板子的串口地址、USB 控制器名字不一样，照 XBOTICS.md 里的办法读出来另写一份。
+# 安装、检查与用法见 XBOTICS.md「端侧板：按接口位置固定设备名」。
+
+# 从臂舵机（Feetech 总线，1 Mbps）。板载串口不热插拔，名字跟着串口控制器的硬件地址走。
+SUBSYSTEM=="tty", KERNELS=="fe6b0000.serial", SYMLINK+="xbotics/follower"
+
+# 相机。ID_PATH 由系统自带的 60-persistent-v4l.rules 按接口路径算出（与 /dev/v4l/by-path/ 同一个来源）；
+# 一只 UVC 相机出两个节点，index 0 是出画面的那个，另一个只有元数据。
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.4.auto-usb-0:1:1.0", SYMLINK+="xbotics/top"

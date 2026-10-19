@@ -37,6 +37,7 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(datasets)` | **瑞芯微 MPP 硬件编码**（`h264_rkmpp`）与**边录边编的统计抽样**（`stats_every`），见下「接臂板子录数据」。 |
 | `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
 | `feat(policies)` | **LingBot-VLA 2.0**（`--policy.type=lingbot_vla_v2`，蚂蚁灵波）。只在 0.6 线，见下「LingBot-VLA 2.0」。 |
+| `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：从臂串口、顶视相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -217,6 +218,42 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
   浏览器里一收到数据就卡死；0.26.2 同一浏览器正常。`viz` 组声明的是 `>=0.24,<0.34`，0.26.2 在范围内。
 
 BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robotics/rdk_LeRobot_tools)，不在本 fork 内。
+
+## 端侧板：按接口位置固定设备名（RK3566）
+
+板子上的 `/dev/videoN` 是按枚举顺序分的，换个口、重启一次都可能变。
+[`xbotics/udev/99-xbotics-rk3566.rules`](xbotics/udev/99-xbotics-rk3566.rules) 按**插在板子的哪个口**起固定名字，
+不按序号，也不按相机型号或序列号 —— 同型号的相机插哪个口就叫哪个名字，换相机不用改规则：
+
+| 固定名字 | 是什么 | 按什么匹配 |
+|---|---|---|
+| `/dev/xbotics/follower` | 从臂舵机（板载串口，系统里叫 `ttyS3`） | 串口控制器的设备树节点 `fe6b0000.serial` |
+| `/dev/xbotics/top` | 顶视相机 | USB 接口路径 `platform-xhci-hcd.4.auto-usb-0:1:1.0`（xhci-hcd.4 控制器的 1 号口） |
+
+腕部相机的口还没定，定了再加一行。只适用于 ZTL A566 这一款板子。
+
+装（板子上，root）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/udev/99-xbotics-rk3566.rules \
+  -o /etc/udev/rules.d/99-xbotics-rk3566.rules
+udevadm control --reload
+udevadm trigger --action=add --subsystem-match=tty --subsystem-match=video4linux
+ls -l /dev/xbotics/
+```
+
+最后一行应当列出 `follower -> ../ttyS3`、`top -> ../videoN`。之后命令里直接写这些名字：
+`--robot.port=/dev/xbotics/follower`，相机 `index_or_path: /dev/xbotics/top`。
+
+实测（2026-10-19，ZTL A566）：经固定名字，从臂 6 个 STS3215 在 1 Mbps 下全部读到（同步读位置 300 次 0 失败、中位 1.3 ms）；
+顶视相机出 640×480、约 29 fps。
+
+**换一款板子**：这份规则只认这款板子的串口地址和 USB 控制器名。把设备插好，读出位置再照着写一份：
+
+```bash
+udevadm info -q property -n /dev/videoN | grep '^ID_PATH='                 # 相机：取 index 为 0 的那个节点
+udevadm info -a -n /dev/ttyS3 | grep -m1 'KERNELS==".*\.serial"'           # 板载串口
+```
 
 ## 从 0.5 线迁到 0.6 线要改什么
 
