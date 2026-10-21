@@ -24,6 +24,8 @@ import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors import safe_open
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
@@ -57,9 +59,13 @@ from .model_core.utils import (
     our_sdpa_attention_forward,
 )
 from .model_core.video_teacher import load_video_teacher, video_input
+from .optim_lingbot_vla_v2 import MASTER_INIT_ATTR
 from .processor_lingbot_vla_v2 import TEACHER_IMAGES
 
 logger = logging.getLogger(__name__)
+
+# Upstream ``muon.py::_DEFAULT_ADAMW_NAME_PATTERNS``: matrices that stay on AdamW under Muon.
+MUON_EXCLUDED_NAMES = ("embed_tokens", "embedding", "lm_head", "output_layer")
 
 
 @contextmanager
@@ -2095,35 +2101,70 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> list[dict]:
-        """Param groups with a separate LR for the MoE experts (standard AdamW).
+        """Param groups of the upstream recipe: Muon or AdamW, at the base or the MoE-expert LR.
 
-        Returns two groups: the MoE expert params (scaled LR when use_moe_expert_lr)
-        and everything else at the base LR. Frozen params are excluded — with PEFT that
-        is ~0.2B adapter params instead of 6B.
+        Follows upstream ``split_muon_adamw_params`` + ``build_muon_optimizer``: with
+        ``optimizer_type="muon"`` the 2D/3D weight matrices use Muon, except embeddings (``nn.Embedding``
+        modules and names containing one of ``MUON_EXCLUDED_NAMES``); everything else uses AdamW. With
+        ``use_moe_expert_lr`` the routed experts train at lr * sqrt(token_num_experts / token_top_k).
+        Frozen params are excluded — with PEFT that is ~0.2B adapter params instead of 6B.
         """
         cfg = self.config
         expert_lr_scale = 1.0
         if cfg.use_moe and cfg.use_moe_expert_lr and cfg.token_top_k > 0:
             expert_lr_scale = (cfg.token_num_experts / cfg.token_top_k) ** 0.5
+        embeddings = {
+            id(p) for m in self.modules() if isinstance(m, nn.Embedding) for p in m.parameters(recurse=False)
+        }
 
-        expert_params = []
-        base_params = []
+        groups: dict[tuple[bool, bool], list[nn.Parameter]] = {}
         for name, p in self.named_parameters():
             if not p.requires_grad:
                 continue
-            if ".mlp.experts." in name:
-                expert_params.append(p)
-            else:
-                base_params.append(p)
-
-        groups = []
-        if base_params:
-            groups.append({"params": base_params})
-        if expert_params:
-            groups.append({"params": expert_params, "lr": cfg.optimizer_lr * expert_lr_scale})
+            use_muon = (
+                cfg.optimizer_type == "muon"
+                and p.ndim in (2, 3)
+                and id(p) not in embeddings
+                and not any(pattern in name.lower() for pattern in MUON_EXCLUDED_NAMES)
+            )
+            groups.setdefault((use_muon, ".mlp.experts." in name), []).append(p)
         if not groups:
             raise ValueError("No trainable LingBot parameters")
-        return groups
+        if cfg.master_weights:
+            self._attach_fp32_master_init()
+
+        param_groups = []
+        for (use_muon, is_expert), params in groups.items():
+            group = {"params": params, "use_muon": use_muon}
+            if is_expert:
+                group["lr"] = cfg.optimizer_lr * expert_lr_scale
+            param_groups.append(group)
+        return param_groups
+
+    def _attach_fp32_master_init(self) -> None:
+        """Hand the optimizer the checkpoint's exact fp32 values of the trainable low-precision params.
+
+        The model is loaded in ``config.dtype``. When the checkpoint file stores fp32, as the released
+        base does, the fp32 master copies start from those values rather than from their bf16 rounding.
+        Resumed runs restore the masters from the optimizer state instead (their checkpoint is bf16).
+        """
+        path = self.config.pretrained_path
+        targets = {
+            name: p for name, p in self.named_parameters() if p.requires_grad and p.dtype != torch.float32
+        }
+        if path is None or not targets:
+            return
+        if Path(path).is_dir():
+            model_file = Path(path) / SAFETENSORS_SINGLE_FILE
+        else:
+            model_file = hf_hub_download(
+                str(path), SAFETENSORS_SINGLE_FILE, revision=getattr(self.config, "pretrained_revision", None)
+            )
+        with safe_open(str(model_file), framework="pt", device="cpu") as checkpoint:
+            stored = set(checkpoint.keys())
+            for name, p in targets.items():
+                if name in stored and checkpoint.get_slice(name).get_dtype() == "F32":
+                    p.__dict__[MASTER_INIT_ATTR] = checkpoint.get_tensor(name).to(p.device)
 
     # ==================== PEFT (LoRA) integration ====================
     # The community PEFT path (lerobot `--peft.*` CLI → wrap_with_peft →

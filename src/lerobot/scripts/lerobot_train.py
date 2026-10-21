@@ -117,7 +117,9 @@ def update_policy(
     Performs a single training step to update the policy's weights.
 
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
-    learning rate scheduler. Accelerator handles mixed-precision training automatically.
+    learning rate scheduler. Accelerator handles mixed-precision training automatically, and — under
+    gradient accumulation — suppresses gradient sync and the optimizer step on non-final batches and
+    rescales the loss.
 
     Args:
         train_metrics: A MetricsTracker instance to record training statistics.
@@ -147,57 +149,65 @@ def update_policy(
     if sample_weighter is not None:
         sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
-        if sample_weights is not None:
-            # Use per-sample loss for weighted training
-            # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
-            per_sample_loss, output_dict = policy.forward(batch, reduction="none")
+    # Under gradient accumulation this context suppresses gradient sync on non-final batches and
+    # divides the loss; with gradient_accumulation_steps == 1 it is a transparent no-op (upstream main).
+    with accelerator.accumulate(policy):
+        # Let accelerator handle mixed precision
+        with accelerator.autocast():
+            if sample_weights is not None:
+                # Use per-sample loss for weighted training
+                # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
+                per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
-            # Weighted loss: each sample's contribution is scaled by its weight.
-            # We divide by weight sum (not batch size) so that if some weights are zero,
-            # the remaining samples contribute proportionally more, preserving gradient scale.
-            # Weights are pre-normalized to sum to batch_size for stable training dynamics.
-            epsilon = 1e-6
-            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+                # Weighted loss: each sample's contribution is scaled by its weight.
+                # We divide by weight sum (not batch size) so that if some weights are zero,
+                # the remaining samples contribute proportionally more, preserving gradient scale.
+                # Weights are pre-normalized to sum to batch_size for stable training dynamics.
+                epsilon = 1e-6
+                loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
 
-            # Log weighting statistics
-            if output_dict is None:
-                output_dict = {}
-            for key, value in weight_stats.items():
-                output_dict[f"sample_weight_{key}"] = value
-        else:
-            loss, output_dict = policy.forward(batch)
+                # Log weighting statistics
+                if output_dict is None:
+                    output_dict = {}
+                for key, value in weight_stats.items():
+                    output_dict[f"sample_weight_{key}"] = value
+            else:
+                loss, output_dict = policy.forward(batch)
 
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+            # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+        # Use accelerator's backward method
+        accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+        # Gradients are complete only on the sync batch; clipping partial gradients would be meaningless.
+        grad_norm = None
+        if accelerator.sync_gradients:
+            if grad_clip_norm > 0:
+                grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.parameters(), float("inf"), error_if_nonfinite=False
+                )
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
+        # Optimizer step (a no-op on non-final batches under gradient accumulation)
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
 
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        # Step through pytorch scheduler at every batch instead of epoch
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+    # Update internal buffers if policy has update method; these track optimizer updates, not batches.
+    if accelerator.sync_gradients and has_method(
+        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+    ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    if grad_norm is not None:
+        train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
@@ -257,6 +267,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
             kwargs_handlers=[ddp_kwargs],
             cpu=force_cpu,
         )
@@ -442,8 +453,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        accum = cfg.gradient_accumulation_steps
+        effective_bs = cfg.batch_size * num_processes * accum
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {num_processes} x {accum} grad accum = {effective_bs}"
+            f" ({cfg.steps // accum} optimizer updates)"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 

@@ -18,13 +18,12 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
-from lerobot.optim import (
-    AdamWConfig,
-    CosineDecayWithWarmupSchedulerConfig,
-)
+from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
+
+from .optim_lingbot_vla_v2 import LingbotMuonAdamWConfig
 
 
 @dataclass
@@ -68,11 +67,14 @@ class LingbotVLAV2Config(PreTrainedConfig):
     max_action_dim: int = 55
     max_state_dim: int = 55
 
+    # Upstream normalizes state and action with ``bounds_99_woclip``: q01/q99 -> [-1, 1], unclipped,
+    # which is LeRobot's QUANTILES. The base checkpoint's config.json still says MEAN_STD (Xbotics: pass
+    # --policy.normalization_mapping to fine-tune it with the upstream normalization).
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
         }
     )
 
@@ -213,27 +215,40 @@ class LingbotVLAV2Config(PreTrainedConfig):
     align_params: dict = field(default_factory=dict)
 
     # ==================== Optimizer / Scheduler Presets ====================
-    # Mirror upstream ``use_moe_expert_lr`` (configs/vla/robotwin/robotwin.yaml):
-    # routed experts train at base_lr * (token_num_experts / token_top_k) ** 0.5
-    # (= sqrt(32/4) ≈ 2.83) while everything else keeps the base LR. The released
-    # upstream recipe always trains with this scaling (and Muon applies the same
-    # groups internally — see upstream ``optim/optimizer.py::build_muon_optimizer``).
+    # Defaults follow the upstream RoboTwin post-training recipe (configs/vla/robotwin/robotwin.yaml):
+    # Muon, lr 1e-4 cosine-decayed to 5e-5 over 50k steps without warmup, routed experts at
+    # base_lr * (token_num_experts / token_top_k) ** 0.5 (= sqrt(32/4) ≈ 2.83). The base checkpoint's
+    # config.json still carries the earlier port's AdamW 1e-5 constant schedule (Xbotics: pass
+    # --policy.optimizer_lr / --policy.scheduler_* to fine-tune it with the upstream schedule).
+    # "muon": Muon on the 2D/3D weight matrices, AdamW on the rest (upstream ``optimizer: muon``);
+    # "adamw": AdamW on everything (upstream ``optimizer: adamw``).
+    optimizer_type: str = "muon"
     use_moe_expert_lr: bool = True
-    optimizer_lr: float = 1e-5
+    optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.0
     optimizer_grad_clip_norm: float = 1.0
+    muon_momentum: float = 0.95
+    muon_nesterov: bool = True
+    muon_ns_steps: int = 5
+    muon_adjust_lr_fn: str | None = "match_rms_adamw"
+    # Keep an fp32 master copy of every trainable parameter in the optimizer while the model runs in
+    # ``dtype`` (upstream always trains fp32 parameters). Without it bf16 parameters drop most updates.
+    master_weights: bool = True
 
-    scheduler_warmup_steps: int = 1000
-    scheduler_decay_steps: int = 30000
-    scheduler_decay_lr: float = 1e-5  # constant lr schedule (decay_lr == peak_lr)
+    scheduler_warmup_steps: int = 0
+    scheduler_decay_steps: int = 50000
+    scheduler_decay_lr: float = 5e-5
 
     def __post_init__(self):
         super().__post_init__()
 
         if self.moe_implementation != "fused":
             raise ValueError(f"moe_implementation must be 'fused', got {self.moe_implementation!r}.")
+
+        if self.optimizer_type not in ("muon", "adamw"):
+            raise ValueError(f"optimizer_type must be 'muon' or 'adamw', got {self.optimizer_type!r}.")
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
@@ -328,13 +343,19 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 "Set --policy.action_slots to include them."
             )
 
-    def get_optimizer_preset(self) -> AdamWConfig:
-        return AdamWConfig(
+    def get_optimizer_preset(self) -> LingbotMuonAdamWConfig:
+        # Which params use Muon, and the expert lr, are set per param group by get_optim_params.
+        return LingbotMuonAdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            momentum=self.muon_momentum,
+            nesterov=self.muon_nesterov,
+            ns_steps=self.muon_ns_steps,
+            adjust_lr_fn=self.muon_adjust_lr_fn,
+            master_weights=self.master_weights,
         )
 
     def get_scheduler_preset(self):

@@ -296,6 +296,54 @@ def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
     assert torch.isfinite(action).all()
 
 
+@pytest.mark.parametrize("optimizer_type", ["muon", "adamw"])
+def test_optim_param_groups_follow_upstream(tiny_backbone, optimizer_type):
+    """Muon takes the 2D/3D matrices except embeddings, AdamW the rest; routed experts get the scaled lr."""
+    cfg = _tiny_config(
+        tiny_backbone, optimizer_type=optimizer_type, **_slot_kwargs(arm=[[0, 6]], effector=[[6, 7]])
+    )
+    policy = make_policy(cfg, ds_meta=_ds_meta(7))
+    names = {id(p): name for name, p in policy.named_parameters()}
+    groups = policy.get_optim_params()
+
+    grouped = [id(p) for group in groups for p in group["params"]]
+    assert sorted(grouped) == sorted(id(p) for p in policy.parameters() if p.requires_grad)
+    for group in groups:
+        for p in group["params"]:
+            name = names[id(p)]
+            muon = optimizer_type == "muon" and p.ndim in (2, 3) and "embed_tokens" not in name
+            assert group["use_muon"] == muon, name
+            assert ("lr" in group) == (".mlp.experts." in name), name
+            if ".mlp.experts." in name:
+                assert group["lr"] == pytest.approx(cfg.optimizer_lr * (4 / 2) ** 0.5)
+    assert any(group["use_muon"] for group in groups) == (optimizer_type == "muon")
+
+
+def test_master_weights_start_from_fp32_checkpoint(tiny_backbone, tmp_path):
+    """Loaded in bf16, the trainable params' fp32 masters start from the checkpoint's exact fp32 values."""
+    slots, meta = _slot_kwargs(arm=[[0, 6]], effector=[[6, 7]]), _ds_meta(7)
+    base = make_policy(_tiny_config(tiny_backbone, **slots), ds_meta=meta)
+    base.save_pretrained(tmp_path)
+
+    cfg = PreTrainedConfig.from_pretrained(tmp_path)
+    cfg.pretrained_path, cfg.dtype = tmp_path, torch.bfloat16
+    policy = make_policy(cfg, ds_meta=meta)
+    optimizer = cfg.get_optimizer_preset().build(policy.get_optim_params())
+    for group in optimizer.param_groups:
+        group["lr"] = 0.0  # a no-op step that only creates the masters
+    trainable = {name: p for name, p in policy.named_parameters() if p.requires_grad}
+    for p in trainable.values():
+        assert p.dtype == torch.bfloat16
+        p.grad = torch.zeros_like(p)
+    optimizer.step()
+
+    reference = dict(base.named_parameters())
+    for name, p in trainable.items():
+        master = optimizer.state[p]["master"]
+        assert torch.equal(master, reference[name].detach()), name
+        assert torch.equal(p.detach(), master.bfloat16()), name
+
+
 @skip_if_package_missing("transformers")
 def test_sparse_moe_matches_per_token_reference():
     """The padded sparse expert path equals a naive per-token top-k mixture."""

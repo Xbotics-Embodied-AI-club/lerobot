@@ -100,6 +100,11 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    # Accumulate gradients over this many batches per optimizer update (Xbotics; upstream main's
+    # --accelerator.gradient_accumulation.steps). As upstream, `steps`, `log_freq`, `save_freq` and the
+    # LR schedule count batches, so a run makes steps / gradient_accumulation_steps updates of
+    # batch_size x gradient_accumulation_steps x num_processes samples.
+    gradient_accumulation_steps: int = 1
     prefetch_factor: int = 4
     persistent_workers: bool = True
     # DataLoader worker start method. "spawn" is safer than "fork" with
@@ -288,6 +293,11 @@ class TrainPipelineConfig(HubMixin):
 
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
+
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError(
+                f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}."
+            )
 
         # Remote runs auto-generate the repo_id in submit_to_hf (the policy may only be
         # resolved here, from --policy.path), so don't demand it up front for them.
