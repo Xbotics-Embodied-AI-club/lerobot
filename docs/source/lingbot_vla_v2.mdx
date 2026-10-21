@@ -115,19 +115,33 @@ runs at inference.
 | `state_slots` / `action_slots`          | `null`                      | Raw spans to canonical slots (see above).                                  |
 | `use_relative_actions`                  | `false`                     | Train on actions relative to the current state.                            |
 | `loss_type`                             | `L1_fm`                     | Flow-matching loss on the velocity.                                        |
-| `normalization_mapping`                 | `MEAN_STD` state and action | The RoboTwin checkpoint uses `QUANTILES`.                                  |
+| `normalization_mapping`                 | `QUANTILES` state and action | Upstream `bounds_99_woclip` (q01/q99 -> [-1, 1]). The base checkpoint's config still says `MEAN_STD`. |
 | `train_expert_only`                     | `false`                     | Freeze the Qwen3-VL backbone and train the action expert only.             |
 | `freeze_vision_encoder`                 | `false`                     | Freeze the vision tower.                                                   |
 | `gradient_checkpointing`                | `false`                     | Recompute activations in backward to save memory at the cost of step time. |
+| `optimizer_type`                        | `muon`                      | Upstream post-training optimizer: Muon on 2D/3D weight matrices (MoE experts orthogonalized per expert), AdamW on the rest. `adamw` uses AdamW everywhere. (Xbotics) |
+| `master_weights`                        | `true`                      | Keep an fp32 master copy of every trainable parameter in the optimizer while the model runs in `dtype`, as upstream trains fp32 parameters. Without it, lr-sized updates round away on bf16 weights. (Xbotics) |
 | `use_moe_expert_lr`                     | `true`                      | Routed experts train at `lr * sqrt(num_experts / top_k)`, as upstream.     |
-| `optimizer_lr` / `scheduler_decay_lr`   | `1e-5` / `1e-5`             | AdamW peak and final learning rate.                                        |
+| `optimizer_lr` / `scheduler_decay_lr`   | `1e-4` / `5e-5`             | Peak and final learning rate of the cosine schedule (upstream RoboTwin recipe). The base checkpoint's config still says `1e-5` / `1e-5`. |
+| `scheduler_warmup_steps` / `scheduler_decay_steps` | `0` / `50000`    | Warmup and cosine length, counted in batches. Set the decay to `--steps`.  |
 | `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL vision-token budget per image.                                    |
 | `chunk_size` / `n_action_steps`         | `50` / `50`                 | Predicted horizon and number of actions executed per chunk.                |
 | `num_steps`                             | `10`                        | Denoising steps at inference.                                              |
 | `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL tokenizer and image processor. Use a local path offline.          |
 
 To fit a smaller GPU, combine `--policy.train_expert_only=true` and `--policy.gradient_checkpointing=true` with a
-small `--batch_size`.
+small `--batch_size`, and recover the batch with `--gradient_accumulation_steps` (Xbotics; `--steps`, `--save_freq`
+and the schedule then count batches, as in upstream main).
+
+`--policy.path=lerobot/lingbot_vla_v2_base` keeps the values serialized in that checkpoint's config, so pass
+`--policy.normalization_mapping`, `--policy.optimizer_lr`, `--policy.scheduler_decay_lr`,
+`--policy.scheduler_warmup_steps` and `--policy.scheduler_decay_steps` to fine-tune it with the upstream recipe.
+The fields added since the checkpoint was written (`optimizer_type`, `master_weights`) take their defaults.
+Use DDP (`accelerate launch --multi_gpu`) for multiple GPUs: Muon orthogonalizes whole weight matrices, which an
+FSDP-sharded parameter does not hold.
+
+RoboTwin 2.0 clean data can be prepared with `examples/lingbot_vla_v2_robotwin/convert_robotwin_clean.py`
+(Xbotics), which follows the conversion upstream trains on.
 
 ## Evaluation
 

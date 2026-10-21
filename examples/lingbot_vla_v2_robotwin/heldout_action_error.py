@@ -63,7 +63,9 @@ def main() -> None:
         episodes=held_out,
         delta_timestamps={ACTION: chunk},
     )
-    policy = make_policy(cfg, ds_meta=dataset.meta)
+    # The camera renaming used in training is recorded in the checkpoint's train_config.json.
+    rename_map = json.loads((checkpoint / "train_config.json").read_text()).get("rename_map", {})
+    policy = make_policy(cfg, ds_meta=dataset.meta, rename_map=rename_map)
     policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(
         cfg,

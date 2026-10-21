@@ -37,6 +37,7 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(datasets)` | **瑞芯微 MPP 硬件编码**（`h264_rkmpp`）与**边录边编的统计抽样**（`stats_every`），见下「接臂板子录数据」。 |
 | `feat(utils)` | **网页预览**（`--display_mode=web`；没有桌面时 `rerun` 自动改走它），见下「接臂板子录数据」。 |
 | `feat(policies)` | **LingBot-VLA 2.0**（`--policy.type=lingbot_vla_v2`，蚂蚁灵波）。只在 0.6 线，见下「LingBot-VLA 2.0」。 |
+| `feat(lingbot_vla_v2)` | **LingBot 训练改成官方配方**：fp32 主权重、Muon、分位数归一化；`lerobot-train --gradient_accumulation_steps`；RoboTwin clean 转换脚本。见下「LingBot-VLA 2.0」。 |
 | `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：主从两条臂的串口、顶视与腕部两路相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
 | `feat(board)` | **端侧板配网页**（RK3566）：板子一直开着热点，连上后在浏览器里给板子连 Wi-Fi、设网线，结果实时显示，见下「端侧板：配网页」。 |
 
@@ -95,8 +96,24 @@ PEFT 续训适配器被冻与重复包装（上游两处都修了）。
 蚂蚁灵波（Robbyant）开源的 6B VLA：Qwen3-VL-4B 骨干 + 稀疏 MoE 的 Qwen2 动作专家，flow matching 出动作块，
 各种机器人都映射到统一的 55 维状态 / 动作槽位上。策略代码取自上游 LeRobot **待合并**的 PR
 [#4897](https://github.com/huggingface/lerobot/pull/4897)（head `de61f262`，官方维护者在社区移植 #3967 的基础上重做，
-权重逐张量与原版核对过），`src/lerobot/policies/lingbot_vla_v2/` 与它的测试、文档**逐字未改**；
-转换好的权重直接用上游发布的 `lerobot/lingbot_vla_v2_base`（微调起点）与 `lerobot/lingbot_vla_v2_robotwin`。
+权重逐张量与原版核对过）；转换好的权重直接用上游发布的 `lerobot/lingbot_vla_v2_base`（微调起点）与
+`lerobot/lingbot_vla_v2_robotwin`。PR 原样搬来之后，本线只改了训练（见下「训练改成官方配方」），推理与模型结构未动。
+
+**训练改成官方配方（2026-10-21，`cf4c8bcd`）。** PR 原版把整个模型转成 bf16 后直接用 AdamW 更新：学习率 1e-5 时，
+更新量不到 bf16 一个精度单位的一半，原版权重里约 92% 的动作专家参数一步都改不动（外部用户照手册训，loss 停在 0.2 左右）。
+官方训练一律保留 fp32 参数。本线改为：
+
+- 优化器 `lingbot_muon_adamw`：矩阵参数（含三维 MoE 专家堆叠，逐专家正交化）走 Muon，其余走 AdamW，照官方
+  `lingbotvla/optim/muon.py`；每个低精度可训练参数在优化器里持有 fp32 主副本，更新落在主副本上再写回 bf16，
+  主副本随 `training_state` 存取，续训不丢精度；基础权重是 fp32 的，主副本直接从文件里的原值起步。
+- 新配置的默认值照官方 `robotwin.yaml`：lr 1e-4 余弦降到 5e-5、不预热、状态与动作 `QUANTILES`（= 官方 `bounds_99_woclip`）。
+  ⚠️ 从 `lerobot/lingbot_vla_v2_base` 微调时，它 config.json 里存的旧值（1e-5 恒定、预热 1000、`MEAN_STD`）仍生效，
+  要在命令行用 `--policy.normalization_mapping` / `--policy.optimizer_lr` / `--policy.scheduler_*` 覆盖；新加的
+  `optimizer_type`（默认 `muon`）与 `master_weights`（默认开）不用写。
+- `lerobot-train --gradient_accumulation_steps=N`：照上游 main 的语义，`steps` / `log_freq` / `save_freq` / 学习率调度都按小批计。
+- 多卡用 `accelerate launch --multi_gpu`（DDP）。不要用 FSDP：Muon 要整块矩阵做正交化，FSDP 切碎的参数算不对。
+- RoboTwin 2.0 clean 数据的转换（口径照官方训练用的那套）与留出集动作误差：`examples/lingbot_vla_v2_robotwin/`。
+  完整步骤见飞书《LingBot-VLA 2.0 在 RoboTwin 2.0 上微调（4 卡 H200）》。
 
 ```toml
 # uv 项目里装：多加 lingbot_vla_v2 组
@@ -112,6 +129,8 @@ lerobot-train \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
   --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
+  --policy.normalization_mapping='{"VISUAL": "IDENTITY", "STATE": "QUANTILES", "ACTION": "QUANTILES"}' \
+  --policy.optimizer_lr=1e-4 --policy.scheduler_decay_lr=5e-5 --policy.scheduler_warmup_steps=0 --policy.scheduler_decay_steps=30000 \
   --policy.device=cuda --policy.dtype=bfloat16 --policy.push_to_hub=false --batch_size=1 --steps=30000
 ```
 

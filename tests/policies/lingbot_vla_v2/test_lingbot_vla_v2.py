@@ -304,6 +304,13 @@ def test_optim_param_groups_follow_upstream(tiny_backbone, optimizer_type):
     )
     policy = make_policy(cfg, ds_meta=_ds_meta(7))
     names = {id(p): name for name, p in policy.named_parameters()}
+    embeddings = {
+        f"{module_name}.{param_name}"
+        for module_name, module in policy.named_modules()
+        if isinstance(module, torch.nn.Embedding)
+        for param_name, _ in module.named_parameters(recurse=False)
+    }
+    assert "model.qwenvl_with_expert.qwenvl.model.visual.pos_embed.weight" in embeddings
     groups = policy.get_optim_params()
 
     grouped = [id(p) for group in groups for p in group["params"]]
@@ -311,7 +318,7 @@ def test_optim_param_groups_follow_upstream(tiny_backbone, optimizer_type):
     for group in groups:
         for p in group["params"]:
             name = names[id(p)]
-            muon = optimizer_type == "muon" and p.ndim in (2, 3) and "embed_tokens" not in name
+            muon = optimizer_type == "muon" and p.ndim in (2, 3) and name not in embeddings
             assert group["use_muon"] == muon, name
             assert ("lr" in group) == (".mlp.experts." in name), name
             if ".mlp.experts." in name:
