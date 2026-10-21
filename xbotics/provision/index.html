@@ -30,7 +30,7 @@
   .msg::after { content: "✕"; margin-left: auto; color: #52606d; }
   .msg[hidden] { display: none; }
   .msg.running { background: #fff7e6; } .msg.done { background: #e6f4ea; } .msg.failed { background: #fdecea; }
-  a { color: #2563eb; } .links a { display: block; margin: 4px 0; }
+  a { color: #2563eb; } .links a { display: block; margin: 4px 0; } .links .host + .host { margin-top: 12px; }
   .hint { font-size: 13px; color: #52606d; margin-top: 6px; }
 </style>
 </head>
@@ -109,8 +109,10 @@ async function refresh() {
     `<div class="row"><span class="label">名字</span>${esc(s.hotspot.ssid)}</div><div class="row"><span class="label">地址</span>${esc(s.hotspot.address)}</div>`;
   const ips = [...s.ethernet.addresses, ...s.wifi.addresses].map((a) => a.split("/")[0]);
   $("links-box").hidden = ips.length === 0;
-  $("links").innerHTML = [s.mdns, ...ips].map((h) =>
-    `<a href="http://${h}:7681" target="_blank">网页终端 http://${esc(h)}:7681</a><a href="http://${h}:8000" target="_blank">浏览器版 VS Code http://${esc(h)}:8000</a>`).join("");
+  // 四个网页服务连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code
+  const services = [[8001, "网络设置页（本页）"], [8002, "网页终端"], [8003, "JupyterLab"], [8004, "浏览器版 VS Code"]];
+  $("links").innerHTML = [s.mdns, ...ips].map((h) => `<div class="host">` + services.map(([port, name]) =>
+    `<a href="http://${h}:${port}" target="_blank">${name} http://${esc(h)}:${port}</a>`).join("") + `</div>`).join("");
   $("saved").innerHTML = s.saved_wifi.length ? "已保存的 Wi-Fi：" + s.saved_wifi.map((n) =>
     `${esc(n)} <a href="#" data-forget="${esc(n)}">删掉</a>`).join("，") : "";
   if (!wiredFilled && s.ethernet.method) {

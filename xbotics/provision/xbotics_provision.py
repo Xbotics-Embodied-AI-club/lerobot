@@ -4,7 +4,7 @@
 所以板子去连 Wi-Fi 时热点不断，页面能一直显示连没连上、拿到什么地址。
 DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d 里一条 address=/#/ 让所有域名都指向板子，
 再关掉 ap0 的转发让热点设备上不了外网，连上热点的电脑 / 手机检测联网时就会弹出这个页面。
-同一个页面在局域网里也能打开（http://<板子地址>/）。只用系统 Python 标准库与 nmcli，以 root 运行。
+同一个页面在局域网里也能打开（http://<板子地址>:8001/，80 端口也行）。只用系统 Python 标准库与 nmcli，以 root 运行。
 
 只在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测过；装法见 XBOTICS.md。
 """
@@ -22,7 +22,9 @@ AP_IFACE, STA_IFACE, ETH_IFACE = "ap0", "wlan0", "eth0"
 AP_CON = "xbotics-ap"
 TRIAL_CON = "xbotics-try"  # 试连新 Wi-Fi 时的临时配置名，成了再改成网络名
 AP_ADDR = "10.42.0.1"
-PORT = 80
+# 套件的四个网页服务用连号端口，好记：8001 配网页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code。
+# 80 也开着同一个页面：连上热点的电脑 / 手机检测联网只打 80，弹页要靠它；`http://10.42.0.1` 不写端口也能开。
+PORTS = (80, 8001)
 PAGE = (Path(__file__).resolve().parent / "index.html").read_bytes()
 # 用来判断「能不能上外网」：两个公共 DNS 的 53 端口，任一连得上就算通
 ONLINE_PROBES = (("223.5.5.5", 53), ("1.1.1.1", 53))
@@ -394,9 +396,11 @@ def main() -> None:
     ensure_hotspot()
     STATUS.refresh()
     threading.Thread(target=STATUS.loop, daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"配网服务：热点 {ap_ssid()}，页面 http://{AP_ADDR}/", flush=True)
-    server.serve_forever()
+    servers = [ThreadingHTTPServer(("0.0.0.0", port), Handler) for port in PORTS]
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"配网服务：热点 {ap_ssid()}，页面 http://{AP_ADDR}/（端口 {'、'.join(map(str, PORTS))}）", flush=True)
+    servers[0].serve_forever()
 
 
 if __name__ == "__main__":
