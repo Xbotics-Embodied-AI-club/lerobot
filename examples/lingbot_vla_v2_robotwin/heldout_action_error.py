@@ -94,7 +94,7 @@ def main() -> None:
             (len(samples), cfg.chunk_size, cfg.max_action_dim),
             generator=generator,
             device="cuda",
-        )
+        ).to(next(policy.parameters()).dtype)  # the model runs in its config dtype (bf16)
         with torch.no_grad():
             predicted = postprocessor(policy.predict_action_chunk(model_batch, noise=noise))
         errors.append((predicted.float().cpu() - truth).abs().numpy())
