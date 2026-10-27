@@ -393,8 +393,11 @@ export class CalibrationViewer {
       const parentLink = joint.parent?.isURDFLink ? joint.parent : null;
       const structureLink = name === 'gripper' && parentLink ? parentLink : childLink;
       const structureMeshes = name === 'wrist_roll' ? [] : collectLinkMeshes(structureLink, false, assigned);
+      // 夹爪会动的那一片（从臂的动颚、主臂的扳机）也归夹爪，跟着它的状态变色，不当台子
+      const jawMeshes = name === 'gripper' ? collectLinkMeshes(childLink, false, assigned) : [];
       this.actualMeshes[name] = [
         ...structureMeshes,
+        ...jawMeshes,
         ...(parentLink ? collectLinkMeshes(parentLink, true, assigned) : []),
       ];
     }

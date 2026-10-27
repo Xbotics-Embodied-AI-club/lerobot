@@ -23,7 +23,7 @@ from .devices import JOINT_NAMES, ArmSettings, DemoDeviceOwner, make_real_device
 from .store import CalibrationBackup, atomic_write_calibration
 
 JOINT_LABELS = {
-    "shoulder_pan": "底座旋转",
+    "shoulder_pan": "肩部旋转",  # 与页面上的关节卡片同一个叫法
     "shoulder_lift": "肩部抬升",
     "elbow_flex": "肘部弯曲",
     "wrist_flex": "腕部俯仰",

@@ -118,73 +118,104 @@ def test_onboard_serial_ports_with_fixed_names_are_listed(monkeypatch):
     assert [(p["device"], p["fixed_name"]) for p in ports] == [("/dev/ttyS3", "/dev/xbotics/follower")]
 
 
-class FakeBus:
-    """假的飞特总线：记下断开时卸没卸力；寄存器读数按 ID 给。"""
+def _fake_bus_class():
+    """真的 FeetechMotorsBus（真的控制表、真的报警文字），只把串口那一层换成假的。
 
-    found = {1: 777, 2: 777, 9: 12345}
-    disconnects = []
-
-    def __init__(self, port, motors):
-        self.port, self.motors, self.is_connected = port, motors, False
-
-    def connect(self, handshake=True):
-        self.is_connected = True
-
-    def set_baudrate(self, baudrate):
-        assert baudrate == 1_000_000
-
-    def broadcast_ping(self, num_retry=0):
-        return dict(self.found)
-
-    def read(self, register, motor, normalize=True, num_retry=0):
-        assert normalize is False
-        values = {
-            "Present_Position": 2047,
-            "Present_Voltage": 121,
-            "Present_Temperature": 35,
-            "Present_Current": 10,
-            "Present_Load": 25,
-            "Torque_Enable": 0,
-            "Status": 0,
-        }
-        if motor == "id2" and register == "Present_Temperature":
-            raise ConnectionError("no status packet")
-        return values[register]
-
-    def disconnect(self, disable_torque=True):
-        FakeBus.disconnects.append(disable_torque)
-        self.is_connected = False
-
-
-def test_read_motors_scans_reads_and_never_disables_torque(monkeypatch):
+    1、2 号正常（2 号读温度时丢包），3 号在报警（过载，回包 error=0x20），9 号型号不认识。
+    """
     pytest.importorskip("scservo_sdk")
-    monkeypatch.setattr("lerobot.motors.feetech.FeetechMotorsBus", FakeBus)
-    FakeBus.disconnects = []
+    from lerobot.motors.feetech import FeetechMotorsBus
+    from lerobot.motors.feetech.tables import MODEL_NUMBER, STS_SMS_SERIES_CONTROL_TABLE
+
+    by_addr = {addr: name for name, (addr, _) in STS_SMS_SERIES_CONTROL_TABLE.items()}
+    values = {
+        "Present_Position": 2047,
+        "Present_Voltage": 121,
+        "Present_Temperature": 35,
+        "Present_Current": 10,
+        "Present_Load": (1 << 10) | 25,
+        "Torque_Enable": 0,
+        "Status": 0,
+    }
+
+    class FakeBus(FeetechMotorsBus):
+        disconnects = []
+        opened = False
+
+        def connect(self, handshake=True):
+            FakeBus.opened = True
+
+        @property
+        def is_connected(self):
+            return FakeBus.opened
+
+        def set_baudrate(self, baudrate):
+            assert baudrate == 1_000_000
+
+        def _broadcast_ping(self):
+            return {1: 0, 2: 0, 3: 0x20, 9: 0}, 0
+
+        def _read(self, address, length, motor_id, *, num_retry=0, raise_on_error=True, err_msg=""):
+            assert raise_on_error is False
+            error = 0x20 if motor_id == 3 else 0
+            if address == MODEL_NUMBER[0]:
+                return (12345 if motor_id == 9 else 777), 0, error
+            name = by_addr[address]
+            if motor_id == 2 and name == "Present_Temperature":
+                return 0, -6, 0  # 没回包
+            return values[name], 0, error
+
+        def disconnect(self, disable_torque=True):
+            FakeBus.disconnects.append(disable_torque)
+            FakeBus.opened = False
+
+    return FakeBus
+
+
+def test_read_motors_lists_alarmed_motors_and_never_disables_torque(monkeypatch):
+    fake = _fake_bus_class()
+    monkeypatch.setattr("lerobot.motors.feetech.FeetechMotorsBus", fake)
 
     result = hardware_check.read_motors("/dev/ttyS3")
 
     assert result["error"] is None
-    first, second, unknown = result["motors"]
-    assert first == {
-        "id": 1,
+    by_id = {m["id"]: m for m in result["motors"]}
+    assert sorted(by_id) == [1, 2, 3, 9]
+    assert {
+        k: by_id[1][k]
+        for k in (
+            "model",
+            "position",
+            "voltage_v",
+            "temperature_c",
+            "current_ma",
+            "load_pct",
+            "torque_on",
+            "status",
+            "alarm",
+        )
+    } == {
         "model": "sts3215",
         "position": 2047,
         "voltage_v": 12.1,
         "temperature_c": 35,
         "current_ma": 65.0,
-        "load_pct": 2.5,
+        "load_pct": -2.5,
         "torque_on": 0,
         "status": 0,
-    }
-    assert second["temperature_c"] is None  # 单个寄存器读失败只空这一格
-    assert unknown == {"id": 9, "model": "未知型号 12345"}
-    assert FakeBus.disconnects and not any(FakeBus.disconnects), "只读工具断开时不能卸力"
+        "alarm": 0,
+    }  # 负载按符号位解码：负值是方向
+    assert by_id[2]["temperature_c"] is None  # 单个寄存器丢包只空这一格
+    assert by_id[3]["alarm"] == 0x20 and by_id[3]["alarm_text"]  # 报警的舵机照样列出、读数照样有
+    assert by_id[3]["position"] == 2047
+    assert by_id[9]["model"] == "未知型号 12345"
+    assert fake.disconnects == [False], "只读工具断开时不能卸力"
 
 
 def test_read_motors_reports_empty_bus(monkeypatch):
-    pytest.importorskip("scservo_sdk")
-    monkeypatch.setattr("lerobot.motors.feetech.FeetechMotorsBus", FakeBus)
-    monkeypatch.setattr(FakeBus, "found", {})
+    fake = _fake_bus_class()
+    monkeypatch.setattr(fake, "_broadcast_ping", lambda self: ({}, -6))
+    monkeypatch.setattr("lerobot.motors.feetech.FeetechMotorsBus", fake)
 
     result = hardware_check.read_motors("/dev/ttyS1")
 

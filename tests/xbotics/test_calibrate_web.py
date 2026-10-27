@@ -93,7 +93,7 @@ def test_limit_confirmation_uses_observed_motion_range():
     try:
         session.confirm_middle()
         speech = session.snapshot()["speech_instruction"]
-        assert speech == "请移动底座旋转到两端极限，完成后按回车。"
+        assert speech == "请移动肩部旋转到两端极限，完成后按回车。"
         session.demo = False
         for position in (1500, 3000, 2047):
             session.device.bus.positions["shoulder_pan"] = position

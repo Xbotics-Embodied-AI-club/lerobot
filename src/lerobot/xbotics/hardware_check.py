@@ -148,7 +148,7 @@ def is_usb_capture_node(node: str) -> bool:
     """``videoN`` 是不是 USB 相机出画面的那个节点：挂在 USB 上，且 index 为 0（UVC 相机的 index 1 是元数据节点）。"""
     sysfs = V4L_SYSFS / node
     try:
-        on_usb = "/usb" in str((sysfs / "device").resolve())
+        on_usb = any(re.fullmatch(r"usb\d+", part) for part in (sysfs / "device").resolve().parts)
         return on_usb and (sysfs / "index").read_text().strip() == "0"
     except OSError:
         return False
@@ -383,58 +383,88 @@ MOTOR_REGISTERS = {
 }
 
 
+_port_locks: dict[str, threading.Lock] = {}
+_port_locks_guard = threading.Lock()
+
+
+def _port_lock(port: str) -> threading.Lock:
+    """同一条串口同一时刻只读一次：连点两下「读电机」不该让本进程自己把串口打开两次。"""
+    with _port_locks_guard:
+        return _port_locks.setdefault(port, threading.Lock())
+
+
 def read_motors(port: str) -> dict:
     """扫一条飞特总线上的舵机，逐个读当前状态。只读不写：不改力矩、不改任何参数，断开时也不卸力。
 
+    用底层读法（报错不抛）：舵机在报警（过载、过热、电压异常）时回包里带报警位，上层的
+    ``broadcast_ping`` / ``read`` 会把它整个跳过或抛错 —— 而这正是最想看到的那一个。
+    报警位单独放在 ``alarm``（及 ``alarm_text``）里。
+
     和正在用这条串口的程序（lerobot-record、推理客户端、网页标定）同时读会互相打乱数据，由用的人避开。
     """
-    from lerobot.motors import Motor, MotorNormMode
+    import scservo_sdk as scs
+
+    from lerobot.motors.encoding_utils import decode_sign_magnitude
     from lerobot.motors.feetech import FeetechMotorsBus
-    from lerobot.motors.feetech.tables import MODEL_NUMBER_TABLE
+    from lerobot.motors.feetech.tables import MODEL_NUMBER
+    from lerobot.motors.motors_bus import get_address
 
-    model_names = {number: name for name, number in MODEL_NUMBER_TABLE.items()}
-    scanner = FeetechMotorsBus(port, motors={})
-    try:
-        scanner.connect(handshake=False)
-        scanner.set_baudrate(MOTOR_BAUDRATE)
-        found = scanner.broadcast_ping(num_retry=2) or {}
-    except Exception as error:
-        return {"port": port, "motors": [], "error": f"打不开串口或总线无响应：{error}"}
-    finally:
-        if scanner.is_connected:
-            scanner.disconnect(disable_torque=False)
-    if not found:
-        return {
-            "port": port,
-            "motors": [],
-            "error": "这条总线上没有扫到舵机：检查舵机供电、接线，以及串口是否选对",
-        }
+    with _port_lock(port):
+        bus = None
+        try:
+            bus = FeetechMotorsBus(port, motors={})
+            model_names = {number: name for name, number in bus.model_number_table.items()}
+            bus.connect(handshake=False)
+            bus.set_baudrate(MOTOR_BAUDRATE)
+            ids_status, comm = {}, None
+            for _ in range(3):
+                ids_status, comm = bus._broadcast_ping()
+                if bus._is_comm_success(comm):
+                    break
+            if not ids_status:
+                if comm is not None and not bus._is_comm_success(comm) and comm != scs.COMM_RX_TIMEOUT:
+                    return {
+                        "port": port,
+                        "motors": [],
+                        "error": f"总线通信失败：{bus.packet_handler.getTxRxResult(comm)}",
+                    }
+                return {
+                    "port": port,
+                    "motors": [],
+                    "error": "这条总线上没有扫到舵机：检查舵机供电、接线，以及串口是否选对",
+                }
 
-    known = {id_: model_names[number] for id_, number in found.items() if number in model_names}
-    motors = []
-    bus = FeetechMotorsBus(
-        port,
-        motors={f"id{id_}": Motor(id_, model, MotorNormMode.RANGE_M100_100) for id_, model in known.items()},
-    )
-    try:
-        bus.connect(handshake=False)
-        bus.set_baudrate(MOTOR_BAUDRATE)
-        for id_, number in sorted(found.items()):
-            entry = {"id": id_, "model": model_names.get(number, f"未知型号 {number}")}
-            if id_ in known:
-                for register, (key, scale) in MOTOR_REGISTERS.items():
-                    try:
-                        value = bus.read(register, f"id{id_}", normalize=False, num_retry=2)
+            motors = []
+            for id_, ping_status in sorted(ids_status.items()):
+                alarm = ping_status
+                number, comm, error = bus._read(*MODEL_NUMBER, id_, num_retry=2, raise_on_error=False)
+                alarm |= error
+                model = model_names.get(number) if bus._is_comm_success(comm) else None
+                entry = {
+                    "id": id_,
+                    "model": model or (f"未知型号 {number}" if bus._is_comm_success(comm) else "读不到"),
+                }
+                if model:
+                    encodings = bus.model_encoding_table.get(model, {})
+                    for register, (key, scale) in MOTOR_REGISTERS.items():
+                        addr, length = get_address(bus.model_ctrl_table, model, register)
+                        value, comm, error = bus._read(addr, length, id_, num_retry=2, raise_on_error=False)
+                        alarm |= error
+                        if not bus._is_comm_success(comm):
+                            entry[key] = None
+                            continue
+                        if register in encodings:
+                            value = decode_sign_magnitude(value, encodings[register])
                         entry[key] = round(value * scale, 1) if scale != 1 else int(value)
-                    except Exception:
-                        entry[key] = None
-            motors.append(entry)
-    except Exception as error:
-        return {"port": port, "motors": motors, "error": f"读取中断：{error}"}
-    finally:
-        if bus.is_connected:
-            bus.disconnect(disable_torque=False)
-    return {"port": port, "motors": motors, "error": None}
+                entry["alarm"] = alarm
+                entry["alarm_text"] = bus.packet_handler.getRxPacketError(alarm) if alarm else ""
+                motors.append(entry)
+            return {"port": port, "motors": motors, "error": None}
+        except Exception as error:
+            return {"port": port, "motors": [], "error": f"打不开串口或读取中断：{error}"}
+        finally:
+            if bus is not None and bus.is_connected:
+                bus.disconnect(disable_torque=False)
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +518,7 @@ INDEX_HTML = """<!DOCTYPE html>
 </table>
 
 <h2>电机状态</h2>
-<span class="hint">点串口那一行的「读电机」，扫这条总线上的舵机并读一次当前状态；只读不写，不改力矩。
+<span class="hint">点串口那一行的「读电机」，扫这条总线上的舵机并读一次当前状态；只读不写，不改力矩。报警的舵机也会列出来，报警原因在最后一列。
 录数据、推理、网页标定正在用这条臂时别点，同时读会互相打乱数据。</span>
 <div id="motors-result"></div>
 
@@ -596,28 +626,43 @@ async function diffPorts() {
   }
 }
 
+let readingMotors = false;
 async function readMotors(port, fixedName) {
+  if (readingMotors) return;
+  readingMotors = true;
+  const buttons = document.querySelectorAll('#ports-table button');
+  buttons.forEach(b => b.disabled = true);
   const box = document.getElementById('motors-result');
   const label = fixedName ? `${port}（${fixedName}）` : port;
   box.innerHTML = `<span class="hint">正在读 ${label} …</span>`;
-  const r = await (await fetch('/api/motors?port=' + encodeURIComponent(port))).json();
-  const fmt = v => (v === null || v === undefined) ? '—' : v;
-  let html = `<div class="title mono" style="margin-top:8px">${label}：扫到 ${r.motors.length} 个舵机</div>`;
-  if (r.error) html += `<div class="err">${r.error}</div>`;
-  if (r.motors.length) {
-    html += '<table><thead><tr><th>ID</th><th>型号</th><th>位置（0–4095）</th><th>电压 V</th>' +
-      '<th>温度 ℃</th><th>电流 mA</th><th>负载 %</th><th>力矩</th><th>状态码</th></tr></thead><tbody>';
-    for (const m of r.motors) {
-      const hot = m.temperature_c !== null && m.temperature_c >= 60;
-      html += `<tr><td class="mono">${m.id}</td><td>${m.model}</td><td class="mono">${fmt(m.position)}</td>` +
-        `<td class="mono">${fmt(m.voltage_v)}</td><td class="mono ${hot ? 'warn' : ''}">${fmt(m.temperature_c)}</td>` +
-        `<td class="mono">${fmt(m.current_ma)}</td><td class="mono">${fmt(m.load_pct)}</td>` +
-        `<td>${m.torque_on === null || m.torque_on === undefined ? '—' : (m.torque_on ? '开' : '关')}</td>` +
-        `<td class="mono ${m.status ? 'err' : ''}">${fmt(m.status)}</td></tr>`;
+  try {
+    const res = await fetch('/api/motors?port=' + encodeURIComponent(port));
+    if (!res.ok) throw new Error(`HTTP ${res.status}（串口可能已拔掉，先点「刷新串口列表」）`);
+    const r = await res.json();
+    const fmt = v => (v === null || v === undefined) ? '—' : v;
+    let html = `<div class="title mono" style="margin-top:8px">${label}：扫到 ${r.motors.length} 个舵机</div>`;
+    if (r.error) html += `<div class="err">${r.error}</div>`;
+    if (r.motors.length) {
+      html += '<table><thead><tr><th>ID</th><th>型号</th><th>位置（0–4095）</th><th>电压 V</th>' +
+        '<th>温度 ℃</th><th>电流 mA</th><th>负载 %</th><th>力矩</th><th>状态码</th><th>报警</th></tr></thead><tbody>';
+      for (const m of r.motors) {
+        const hot = m.temperature_c !== null && m.temperature_c !== undefined && m.temperature_c >= 60;
+        html += `<tr><td class="mono">${m.id}</td><td>${m.model}</td><td class="mono">${fmt(m.position)}</td>` +
+          `<td class="mono">${fmt(m.voltage_v)}</td><td class="mono ${hot ? 'warn' : ''}">${fmt(m.temperature_c)}</td>` +
+          `<td class="mono">${fmt(m.current_ma)}</td><td class="mono">${fmt(m.load_pct)}</td>` +
+          `<td>${m.torque_on === null || m.torque_on === undefined ? '—' : (m.torque_on ? '开' : '关')}</td>` +
+          `<td class="mono ${m.status ? 'err' : ''}">${fmt(m.status)}</td>` +
+          `<td class="${m.alarm ? 'err' : ''}">${m.alarm ? m.alarm_text || m.alarm : '无'}</td></tr>`;
+      }
+      html += '</tbody></table>';
     }
-    html += '</tbody></table>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<span class="err">读取失败：${e.message}</span>`;
+  } finally {
+    readingMotors = false;
+    buttons.forEach(b => b.disabled = false);
   }
-  box.innerHTML = html;
 }
 
 loadCameras();
