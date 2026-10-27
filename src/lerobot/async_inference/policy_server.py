@@ -94,6 +94,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self._predicted_timesteps = set()
 
         self.last_processed_obs = None
+        # 最近一次有观测进推理队列的时刻（monotonic）：停太久就强制放一帧进去，见 _enqueue_observation
+        self._last_queued_monotonic: float | None = None
 
         # Attributes will be set by SendPolicyInstructions
         self.device = None
@@ -121,6 +123,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
+
+        self._last_queued_monotonic = None
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -246,15 +250,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(f"Client {client_id} connected for action streaming")
 
         # Generate action based on the most recent observation and its timestep
+        obs = None
+        # 推理失败时要把「上次推理过的观测」还原：_predict_action_chunk 一开始就把它换成了这一帧，
+        # 不还原的话机械臂静止时重发的观测都与失败的这一帧相似，被相似度检查挡掉
+        previous_processed_obs = self.last_processed_obs
+        marked = False
         try:
             getactions_starts = time.perf_counter()
             obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
-
-            with self._predicted_timesteps_lock:
-                self._predicted_timesteps.add(obs.get_timestep())
 
             start_time = time.perf_counter()
             action_chunk = self._predict_action_chunk(obs)
@@ -266,6 +272,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
             # Create and return the action chunk
             actions = services_pb2.Actions(data=actions_bytes)
+
+            # 推理和序列化都成了才记「这一步已推理」。先记后推的话，推理一失败动作块就丢了，
+            # 客户端 latest_action 不前进、之后的观测还是这一步，全被「已推理」挡掉，两边僵死。
+            with self._predicted_timesteps_lock:
+                self._predicted_timesteps.add(obs.get_timestep())
+            marked = True
 
             self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
@@ -290,6 +302,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
+            if obs is not None and not marked:
+                self.last_processed_obs = previous_processed_obs
 
             return services_pb2.Empty()
 
@@ -315,8 +329,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Enqueue an observation if it must go through processing, otherwise skip it.
         Observations not in queue are never run through the policy network"""
 
+        # 停滞兜底：机械臂不动时每帧都和上一帧相似，全被相似度检查滤掉；客户端那条 must_go 一旦丢了，
+        # 就再也拿不到动作块。超过 similarity_stall_timeout 没有观测入队，就把这一帧强制放进去。
+        stalled = (
+            self._last_queued_monotonic is not None
+            and time.monotonic() - self._last_queued_monotonic > self.config.similarity_stall_timeout
+        )
+        if stalled:
+            self.logger.info(
+                f"No observation enqueued for {self.config.similarity_stall_timeout:.1f}s, "
+                f"force-enqueueing observation #{obs.get_timestep()} (stall guard)"
+            )
+
         if (
             obs.must_go
+            or stalled
             or self.last_processed_obs is None
             or self._obs_sanity_checks(obs, self.last_processed_obs)
         ):
@@ -333,6 +360,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
             # Now put the new observation (never blocks as queue is non-full here)
             self.observation_queue.put(obs)
+            self._last_queued_monotonic = time.monotonic()
             return True
 
         return False

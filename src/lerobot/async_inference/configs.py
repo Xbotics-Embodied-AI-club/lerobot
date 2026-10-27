@@ -64,10 +64,22 @@ class PolicyServerConfig:
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
 
+    # Xbotics：机械臂不动时观测全被相似度检查滤掉，客户端的 must_go 一丢就永远等不到动作块；
+    # 这么久没有观测入队就强制放最新一帧进去。
+    similarity_stall_timeout: float = field(
+        default=5.0,
+        metadata={"help": "Force-enqueue the latest observation if none was enqueued for this many seconds"},
+    )
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if self.port < 1 or self.port > 65535:
             raise ValueError(f"Port must be between 1 and 65535, got {self.port}")
+
+        if self.similarity_stall_timeout <= 0:
+            raise ValueError(
+                f"similarity_stall_timeout must be positive, got {self.similarity_stall_timeout}"
+            )
 
         if self.environment_dt <= 0:
             raise ValueError(f"environment_dt must be positive, got {self.environment_dt}")

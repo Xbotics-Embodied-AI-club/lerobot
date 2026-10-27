@@ -299,3 +299,63 @@ def test_rename_map_is_read_from_the_loaded_preprocessor():
         == rename
     )
     assert _rename_map_of(PolicyProcessorPipeline([])) == {}
+
+
+# ---------------------------------------------------------------- stall guard (Xbotics)
+
+
+def test_still_arm_observation_is_force_enqueued_after_stall_timeout(policy_server):
+    """机械臂不动时观测都与上一帧相似；超过 similarity_stall_timeout 仍要放一帧进推理队列。"""
+    state = torch.zeros(6)
+    policy_server.last_processed_obs = _make_obs(state, timestep=0)
+    policy_server._last_queued_monotonic = time.monotonic()
+
+    assert not policy_server._enqueue_observation(_make_obs(state, timestep=1))  # 相似，被滤掉
+
+    policy_server._last_queued_monotonic = (
+        time.monotonic() - policy_server.config.similarity_stall_timeout - 1
+    )
+    assert policy_server._enqueue_observation(_make_obs(state, timestep=1))
+    assert policy_server.observation_queue.qsize() == 1
+
+    # 新客户端连上（Ready）时计时清零，不会一连上就误判停滞
+    policy_server._reset_server()
+    assert policy_server._last_queued_monotonic is None
+
+
+def test_failed_inference_lets_the_retried_observation_through(policy_server, monkeypatch):
+    """推理失败：这一步不记作已推理，「上次推理过的观测」也还原 —— 机械臂静止时重发的相似观测照样能进推理。"""
+    previous = _make_obs(torch.zeros(6), timestep=0)
+    policy_server.last_processed_obs = previous
+    obs = _make_obs(torch.ones(6), timestep=7, must_go=True)
+    policy_server.observation_queue.put(obs)
+
+    def broken(observation_t):
+        policy_server.last_processed_obs = observation_t  # 与真实 _predict_action_chunk 一样先换掉再推理
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(policy_server, "_predict_action_chunk", broken)
+    policy_server.GetActions(None, type("Ctx", (), {"peer": lambda self: "test"})())
+
+    assert 7 not in policy_server._predicted_timesteps
+    assert policy_server.last_processed_obs is previous
+    assert policy_server._enqueue_observation(_make_obs(torch.ones(6), timestep=7))  # 重发，不带 must_go
+
+
+def test_successful_inference_marks_timestep_predicted(policy_server, monkeypatch):
+    obs = _make_obs(torch.ones(6), timestep=3, must_go=True)
+    policy_server.observation_queue.put(obs)
+    monkeypatch.setattr(policy_server, "_predict_action_chunk", lambda _: [])
+    policy_server.config.inference_latency = 0
+
+    policy_server.GetActions(None, type("Ctx", (), {"peer": lambda self: "test"})())
+
+    assert 3 in policy_server._predicted_timesteps
+
+
+def test_similarity_stall_timeout_must_be_positive():
+    pytest.importorskip("grpc")
+    from lerobot.async_inference.configs import PolicyServerConfig
+
+    with pytest.raises(ValueError, match="similarity_stall_timeout"):
+        PolicyServerConfig(similarity_stall_timeout=0)
