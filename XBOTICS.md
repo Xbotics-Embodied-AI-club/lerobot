@@ -397,7 +397,7 @@ lerobot-inference-console \
     --server_host=127.0.0.1 --server_port=8080 --actions_per_chunk=50 --fps=30
 ```
 
-`$CAMERAS` 与连服务器的 SSH 隧道照板子使用手册第 6.1、8.2 节；`--server_host=127.0.0.1` 就是走那条隧道。
+`$CAMERAS` 与连服务器的 SSH 隧道照板子使用手册第 8.1、10.2 节；`--server_host=127.0.0.1` 就是走那条隧道。
 
 - 相机画面默认压 JPEG 再发（`--observation_jpeg_quality=90`，与 `robot_client` 同一个实现；设 0 发原图），发送在后台线程。
 - **RTC**（默认开，`--rtc_enabled`）：按最近几次推理延迟估计何时要下一个动作块，赶在旧块用完前到；
