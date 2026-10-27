@@ -252,6 +252,18 @@ lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+# Xbotics 网页工具：lerobot-hardware-check、lerobot-calibrate-web（edge-tts 是标定页的在线中文语音）、
+# lerobot-inference-console（msgpack / websockets 是连 LingBot-VLA 官方推理服务的那条传输）
+xbotics_tools = [
+    "lerobot[feetech]",
+    "lerobot[pyserial-dep]",
+    "lerobot[grpcio-dep]",
+    "flask>=3.0.0,<4.0.0",
+    "edge-tts>=7.0.0,<8.0.0",
+    "msgpack>=1.0.0,<2.0.0",
+    "websockets>=13.0,<18.0",
+    "pyyaml>=6.0,<7.0",
+]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
@@ -335,6 +347,7 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
     "lerobot[async]",
+    "lerobot[xbotics_tools]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
@@ -369,6 +382,10 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+# Xbotics 网页工具（装 lerobot[xbotics_tools]）
+lerobot-hardware-check="lerobot.xbotics.hardware_check:main"
+lerobot-calibrate-web="lerobot.xbotics.calibrate_web.__main__:main"
+lerobot-inference-console="lerobot.xbotics.inference_console.client:main"
 
 # ---------------- Tool Configurations ----------------
 
@@ -386,7 +403,13 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
+lerobot = [
+    "envs/*.json",
+    "annotations/steerable_pipeline/prompts/*.txt",
+    "xbotics/calibrate_web/static/**/*",
+    "xbotics/calibrate_web/model/**/*",
+    "xbotics/inference_console/webui.html",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

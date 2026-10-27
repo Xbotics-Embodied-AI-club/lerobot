@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# 星禾套件端侧板的网页服务开关（像树莓派的 raspi-config）：
+#   xbotics-config                 弹出菜单，空格勾选要开的服务，回车生效
+#   xbotics-config status          列出每个服务开没开、在不在跑、网址
+#   xbotics-config enable  <名字>…  开启并设为开机自启
+#   xbotics-config disable <名字>…  关闭并取消开机自启
+# 名字：terminal jupyter vscode hardware-check calibrate（all = 全部）。
+# 8001 配网页不在这里：关了就没法从热点进板子改网络。装法见维护版 LeRobot 的 XBOTICS.md。
+set -euo pipefail
+
+# 名字|端口|systemd 服务|说明
+SERVICES=(
+  "terminal|8002|ttyd|网页终端"
+  "jupyter|8003|xbotics-jupyter|JupyterLab"
+  "vscode|8004|code-server@root|浏览器版 VS Code"
+  "hardware-check|8005|xbotics-hardware-check|硬件检测（相机画面、串口、读电机）"
+  "calibrate|8006|xbotics-calibrate-web|SO101 网页标定"
+)
+
+field() { # field <服务行> <第几列>
+  cut -d'|' -f"$2" <<<"$1"
+}
+
+find_service() {
+  local row
+  for row in "${SERVICES[@]}"; do
+    if [[ "$(field "$row" 1)" == "$1" ]]; then
+      echo "$row"
+      return 0
+    fi
+  done
+  echo "不认识的服务名：$1（可用：$(names)）" >&2
+  return 1
+}
+
+names() {
+  local row out=()
+  for row in "${SERVICES[@]}"; do out+=("$(field "$row" 1)"); done
+  echo "${out[*]}"
+}
+
+board_ip() {
+  hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "要用 root 运行：sudo xbotics-config $*" >&2
+    exit 1
+  fi
+}
+
+in_web_terminal() { # 当前会话是不是从网页终端（ttyd）里开的
+  local pid=$$
+  while [[ $pid -gt 1 ]]; do
+    [[ "$(cat "/proc/$pid/comm" 2>/dev/null)" == "ttyd" ]] && return 0
+    pid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo 1)
+  done
+  return 1
+}
+
+set_service() { # set_service <名字> on|off
+  local row unit
+  row=$(find_service "$1") || return 1
+  unit=$(field "$row" 3)
+  if ! systemctl cat "$unit" >/dev/null 2>&1; then
+    echo "$1：板子上没装 $unit（装法见 XBOTICS.md）" >&2
+    return 1
+  fi
+  if [[ "$2" == on ]]; then
+    systemctl enable --now "$unit" >/dev/null 2>&1
+    echo "已开启 $1（$(field "$row" 4)）：http://$(board_ip):$(field "$row" 2)"
+  else
+    systemctl disable --now "$unit" >/dev/null 2>&1
+    echo "已关闭 $1（$(field "$row" 4)）"
+  fi
+}
+
+status() {
+  local row unit enabled active ip
+  ip=$(board_ip)
+  # 表头是中文，printf 按字节补齐会错位，直接写好对齐的一行
+  echo "名字             端口   开机自启 在跑     网址"
+  for row in "${SERVICES[@]}"; do
+    unit=$(field "$row" 3)
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+      enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+      active=$(systemctl is-active "$unit" 2>/dev/null || true)
+    else
+      enabled="没装"
+      active="-"
+    fi
+    printf '%-16s %-6s %-8s %-8s %s\n' "$(field "$row" 1)" "$(field "$row" 2)" "$enabled" "$active" \
+      "http://$ip:$(field "$row" 2)  $(field "$row" 4)"
+  done
+}
+
+expand_names() { # all → 全部名字
+  if [[ "$*" == all ]]; then names; else echo "$*"; fi
+}
+
+menu() {
+  if ! command -v whiptail >/dev/null; then
+    echo "菜单要用 whiptail：apt-get install -y whiptail；也可以直接用子命令，见 xbotics-config help" >&2
+    exit 1
+  fi
+  local row unit state items=() chosen name
+  for row in "${SERVICES[@]}"; do
+    unit=$(field "$row" 3)
+    state=OFF
+    systemctl is-enabled "$unit" >/dev/null 2>&1 && state=ON
+    items+=("$(field "$row" 1)" "$(field "$row" 2)  $(field "$row" 4)" "$state")
+  done
+  chosen=$(whiptail --title "Xbotics 板子网页服务" --checklist \
+    "空格勾选要开的服务，回车生效（开的会开机自启）。8001 网络设置页一直开着，不在这里。" \
+    18 78 ${#SERVICES[@]} "${items[@]}" 3>&1 1>&2 2>&3) || exit 0
+  chosen=$(tr -d '"' <<<"$chosen")
+
+  local log=""
+  for row in "${SERVICES[@]}"; do
+    name=$(field "$row" 1)
+    unit=$(field "$row" 3)
+    if [[ " $chosen " == *" $name "* ]]; then
+      systemctl is-active "$unit" >/dev/null 2>&1 && systemctl is-enabled "$unit" >/dev/null 2>&1 && continue
+      log+="$(set_service "$name" on 2>&1)"$'\n'
+    else
+      systemctl is-enabled "$unit" >/dev/null 2>&1 || systemctl is-active "$unit" >/dev/null 2>&1 || continue
+      if [[ "$name" == terminal ]] && in_web_terminal; then
+        whiptail --title "关闭网页终端" --yesno \
+          "你正在网页终端里：关掉它，这个页面会马上断开，之后要从 VS Code 的终端或 SSH 再打开。确定关？" 10 70 \
+          || continue
+      fi
+      log+="$(set_service "$name" off 2>&1)"$'\n'
+    fi
+  done
+  whiptail --title "完成" --msgbox "${log:-没有改动。}"$'\n'"$(status)" 20 100
+}
+
+usage() {
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+cmd=${1:-menu}
+[[ $# -gt 0 ]] && shift
+case "$cmd" in
+  menu) require_root; menu ;;
+  status) status ;;
+  enable | disable)
+    require_root "$cmd" "$@"
+    [[ $# -gt 0 ]] || { echo "要给服务名：$(names)（或 all）" >&2; exit 1; }
+    rc=0
+    for name in $(expand_names "$@"); do
+      set_service "$name" "$([[ "$cmd" == enable ]] && echo on || echo off)" || rc=1
+    done
+    exit $rc
+    ;;
+  help | -h | --help) usage ;;
+  *) echo "不认识的命令：$cmd" >&2; usage; exit 1 ;;
+esac

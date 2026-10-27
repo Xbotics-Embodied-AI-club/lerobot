@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>SO101 标定工作台</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <div class="brand-text">
+            <h1>SO101 标定工作台</h1>
+            <p>六关节中位与限位标定 · 数字孪生</p>
+          </div>
+        </div>
+        <div class="topbar-status">
+          <button id="speechToggle" class="btn small ghost speech-toggle" type="button" aria-pressed="true">
+            语音：开
+          </button>
+          <span id="streamIndicator" class="status-pill offline">
+            <i></i><span>实时通道未连接</span>
+          </span>
+          <span id="sessionBadge" class="status-pill neutral hidden"></span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="panel steps-panel">
+          <div class="panel-heading">
+            <h2>标定流程</h2>
+            <span id="phaseBadge" class="phase-badge">待连接</span>
+          </div>
+
+          <div id="deviceSummary" class="device-summary">
+            <div class="device-summary-row">
+              <span class="label">设备</span>
+              <strong id="summaryTarget">未连接</strong>
+            </div>
+            <div class="device-summary-row">
+              <span class="label">端口</span>
+              <code id="summaryPort">—</code>
+            </div>
+            <div class="device-summary-row">
+              <span class="label">模式</span>
+              <span id="summaryDemo" class="tag">—</span>
+            </div>
+          </div>
+
+          <ol id="stepList" class="step-list">
+            <li data-step="connect">
+              <span class="step-index">1</span>
+              <div><strong>连接设备</strong><small>选择主臂或从臂</small></div>
+            </li>
+            <li data-step="middle">
+              <span class="step-index">2</span>
+              <div><strong>中位确认</strong><small>摆到中位后确认</small></div>
+            </li>
+            <li data-step="ranges">
+              <span class="step-index">3</span>
+              <div><strong>记录限位</strong><small>逐个关节记录最小值与最大值</small></div>
+            </li>
+            <li data-step="review">
+              <span class="step-index">4</span>
+              <div><strong>复核结果</strong><small>检查候选范围与回零偏移</small></div>
+            </li>
+            <li data-step="write">
+              <span class="step-index">5</span>
+              <div><strong>写入标定</strong><small>保存到电机</small></div>
+            </li>
+            <li data-step="done">
+              <span class="step-index">6</span>
+              <div><strong>完成</strong><small>标定结束</small></div>
+            </li>
+          </ol>
+
+          <div id="rangeProgress" class="range-progress hidden"></div>
+
+          <section id="reviewSection" class="review-section hidden">
+            <div class="section-heading">
+              <h3>候选标定结果</h3>
+              <span class="muted">来自服务端快照</span>
+            </div>
+            <div class="table-wrap">
+              <table id="reviewTable">
+                <thead>
+                  <tr>
+                    <th>关节</th>
+                    <th>候选范围</th>
+                    <th>回零偏移</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="legend-card">
+            <h3>3D 状态图例</h3>
+            <ul class="legend-list">
+              <li><i class="dot pending"></i>待标定</li>
+              <li><i class="dot active"></i>当前关节</li>
+              <li><i class="dot pass"></i>已通过</li>
+              <li><i class="dot error"></i>异常</li>
+              <li><i class="dot target"></i>目标位置</li>
+            </ul>
+          </div>
+        </aside>
+
+        <section class="panel viewer-panel">
+          <div class="viewer-toolbar">
+            <div class="viewer-title">
+              <h2>数字孪生</h2>
+              <span id="viewerModelState" class="muted">模型加载中…</span>
+            </div>
+            <div class="viewer-actions">
+              <button id="togglePlay" type="button" class="btn small ghost" disabled>暂停目标动画</button>
+              <button id="focusJoint" type="button" class="btn small ghost" disabled>聚焦当前关节</button>
+              <button id="resetView" type="button" class="btn small ghost" disabled>视角复位</button>
+            </div>
+          </div>
+          <div id="viewer" class="viewer" aria-label="SO101 三维模型视图">
+            <div id="viewerMessage" class="viewer-message">
+              <div class="spinner" aria-hidden="true"></div>
+              <p>正在加载 SO101 模型…</p>
+            </div>
+            <div class="viewer-hud">
+              <span id="hudPhase">等待会话</span>
+              <span id="hudTarget" class="muted"></span>
+            </div>
+            <div class="viewer-footnote">
+              <span><i class="dot actual"></i>实体模型：实际角度</span>
+              <span><i class="dot target"></i>半透明模型：期望目标</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="panel state-panel">
+          <section id="instructionCard" class="instruction-card">
+            <span class="eyebrow">当前动作</span>
+            <h2 id="instructionTitle">等待连接</h2>
+            <p id="instructionText">选择主臂或从臂并连接后，按提示完成标定。</p>
+            <div class="instruction-meta">
+              <span id="stageBadge" class="stage-badge hidden"></span>
+              <span id="actionHint" class="muted"></span>
+            </div>
+          </section>
+
+          <section class="joints-section">
+            <div class="panel-heading">
+              <h2>关节状态</h2>
+              <span id="jointPassCount" class="muted">—</span>
+            </div>
+            <div id="jointList" class="joint-list"></div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="actionbar">
+        <div class="actionbar-info">
+          <span id="footerPhase">尚未连接设备</span>
+          <span id="footerError" class="footer-error hidden"></span>
+        </div>
+        <div class="action-buttons">
+          <button id="newSessionButton" type="button" class="btn ghost hidden">开始新标定</button>
+          <span id="actionButtons" class="action-buttons-inner"></span>
+          <button id="cancelButton" type="button" class="btn danger ghost hidden">取消会话</button>
+        </div>
+      </footer>
+
+      <div id="connectOverlay" class="connect-overlay">
+        <div class="connect-card" role="dialog" aria-modal="true" aria-labelledby="connectTitle">
+          <div class="connect-heading">
+            <span class="brand-mark" aria-hidden="true">S</span>
+            <div>
+              <h2 id="connectTitle">连接 SO101 设备</h2>
+              <p>选择要标定的机械臂，连接后开始六关节标定流程。</p>
+            </div>
+          </div>
+
+          <div id="devicesLoading" class="inline-info">正在检测设备端口…</div>
+          <div id="devicesError" class="inline-error hidden"></div>
+
+          <div class="target-options" role="radiogroup" aria-label="选择待标定设备">
+            <label class="target-option">
+              <input type="radio" name="target" value="follower" checked />
+              <span class="target-option-body">
+                <span class="target-icon follower" aria-hidden="true"></span>
+                <span class="target-copy">
+                  <strong>从臂 <em>Follower</em></strong>
+                  <small id="followerInfo">检测中…</small>
+                </span>
+                <span class="radio-mark" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="target-option">
+              <input type="radio" name="target" value="leader" />
+              <span class="target-option-body">
+                <span class="target-icon leader" aria-hidden="true"></span>
+                <span class="target-copy">
+                  <strong>主臂 <em>Leader</em></strong>
+                  <small id="leaderInfo">检测中…</small>
+                </span>
+                <span class="radio-mark" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+
+          <div class="port-picker">
+            <label for="portSelect">连接端口</label>
+            <select id="portSelect" aria-describedby="portHint">
+              <option value="">正在检测串口…</option>
+            </select>
+            <small id="portHint">默认是启动时给的串口（板子上是 /dev/xbotics/…），也可选择当前检测到的其他串口。</small>
+          </div>
+
+          <label class="switch-row" for="demoToggle">
+            <input id="demoToggle" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <span class="switch-copy">
+              <strong>演示模式（demo）</strong>
+              <small>不驱动真实硬件，使用虚拟数据完成整个标定流程。</small>
+            </span>
+          </label>
+
+          <button id="connectButton" type="button" class="btn primary block">连接并开始标定</button>
+          <p id="connectError" class="inline-error hidden"></p>
+
+          <details class="device-details">
+            <summary>设备端口详情</summary>
+            <pre id="deviceRaw">—</pre>
+          </details>
+        </div>
+      </div>
+
+      <div id="toast" class="toast hidden" role="status"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

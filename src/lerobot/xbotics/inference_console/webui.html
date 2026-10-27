@@ -1,0 +1,243 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LeRobot 推理控制台</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#111;color:#ddd;font-family:monospace;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+h2{margin:0;color:#7f7;font-size:18px;flex:none}
+main{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+.top{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;flex:none;max-height:55vh;overflow-y:auto}
+.card{background:#1c1c1c;border:1px solid #333;border-radius:8px;padding:12px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+input{background:#000;color:#7f7;border:1px solid #444;padding:6px;font-family:monospace}
+#task{flex:1;min-width:120px}
+select{background:#000;color:#7f7;border:1px solid #444;padding:5px}
+button{padding:6px 14px;background:#242;border:1px solid #464;color:#dfd;cursor:pointer;white-space:nowrap}
+button:hover{background:#353}
+#q{width:100%;height:72px;background:#000;display:block}
+.legend span{margin-right:16px;font-size:12px}
+.b{width:10px;height:10px;display:inline-block;margin-right:4px}
+#camcard{flex:1;display:flex;flex-direction:column;min-height:0}
+#cams{flex:1;display:grid;gap:8px;margin-top:8px;min-height:0;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+#cams .cam{display:flex;flex-direction:column;background:#000;min-height:0;border:1px solid #2a2a2a;border-radius:4px;overflow:hidden}
+#cams .cap{font-size:12px;color:#888;padding:2px 6px;flex:none}
+#cams img{flex:1;width:100%;height:100%;min-height:0;object-fit:contain;display:block}
+#stats{margin-top:10px;line-height:1.6}
+@media (max-width:900px){
+  body{overflow:auto;height:auto}
+  #cams .cam{min-height:180px}
+}
+</style></head><body>
+<h2 id="devTitle">LeRobot 推理控制台</h2>
+<main>
+<div class="top">
+<div class="card">
+  <div class="row">任务: <input id="task"><select id="preset" onchange="applyPreset()"><option value="">预设任务…</option></select><button onclick="setTask()">更新任务</button>
+  <button id="ctrlBtn" onclick="toggleControl()">停止任务</button></div>
+  <div id="stats">加载中…</div>
+</div>
+<div class="card">
+  <div>运行参数（修改后点“应用”，下一控制周期生效）<span id="rtcMsg" style="margin-left:12px"></span></div>
+  <div id="rtc" style="margin-top:8px"></div>
+</div>
+<div class="card">
+  <div>动作队列 <span id="qinfo"></span></div>
+  <canvas id="q"></canvas>
+  <div class="legend">
+    <span><span class="b" style="background:#3f3"></span>新 chunk</span>
+    <span><span class="b" style="background:#fa0"></span>新旧融合区</span>
+    <span><span class="b" style="background:#666"></span>旧 chunk 保留</span>
+    <span style="color:#f66">┃ 执行指针</span>
+  </div>
+</div>
+</div>
+<div class="card" id="camcard">
+  <div><label>视频推流<input type="checkbox" id="videoEnabled" onchange="toggleVideo()" checked></label>
+  <span style="color:#888;font-size:12px">（关闭后停止相机帧采集/编码，节省 CPU）</span></div>
+  <div id="cams"></div>
+</div>
+</main>
+<script>
+let camsInit = false;
+async function tick(){
+  try{
+    const s = await (await fetch('/api/status')).json();
+    if(s.device_name){
+      document.getElementById('devTitle').textContent = '🤖 ' + s.device_name;
+      document.title = s.device_name;
+    }
+    if(document.activeElement !== document.getElementById('task'))
+      document.getElementById('task').value = s.task;
+    document.getElementById('stats').innerHTML =
+      `状态: ${s.running ? '<b style=color:#4f4>运行中</b>' : '<b style=color:#f44>已停止</b>'}` +
+      ` / 任务: ${s.task_active ? '<b style=color:#4f4>执行中</b>' : '<b style=color:#fa0>已暂停</b>'}` +
+      ` | 队列余量: <b>${s.queue_size}/${s.chunk_size}</b>` +
+      ` | 已执行步数: ${s.latest_action} | 已发动作: ${s.actions_sent}` +
+      ` | 推理延迟: ${s.infer_ms.toFixed(0)}ms | 控制FPS: ${s.fps}` +
+      ` | 实测循环: <b>${(s.measured_fps||0).toFixed(1)}Hz</b>` +
+      ` | action: ${(s.action_ms||0).toFixed(1)}ms | obs: ${(s.obs_ms||0).toFixed(1)}ms` +
+      ` | 观测采集: ${(s.obs_capture_fps||0).toFixed(1)}Hz` +
+      ` | chunk使用率: <b>${s.chunk_usage_ratio==null?'--':(s.chunk_usage_ratio*100).toFixed(0)+'%'}</b>` +
+      `${s.chunk_usage_ratio_avg==null?'':` (均值 ${(s.chunk_usage_ratio_avg*100).toFixed(0)}% / ${s.chunk_usage_samples}块)`}` +
+      `${s.chunk_blend_ratio_avg==null?'':` | 融合段 ${(s.chunk_blend_ratio_avg*100).toFixed(0)}%`}` +
+      ` | RTC: ${s.rtc ? '开' : '关'} | 服务器: ${s.server}`;
+    document.getElementById('qinfo').textContent = `(${s.queue_size}/${s.chunk_size})`;
+    const vEl = document.getElementById('videoEnabled');
+    if(document.activeElement !== vEl) vEl.checked = !!s.video_enabled;
+    if(!s.video_enabled){
+      document.getElementById('cams').innerHTML = '<span style="color:#888">视频推流已关闭</span>';
+      camsInit = false;
+    } else if(!camsInit && s.cams.length){
+      camsInit = true;
+      const div = document.getElementById('cams');
+      div.innerHTML = '';
+      s.cams.forEach(c => {
+        const d = document.createElement('div');
+        d.className = 'cam';
+        d.innerHTML = `<div class="cap">${c}</div><img src="/stream/${encodeURIComponent(c)}">`;
+        div.appendChild(d);
+      });
+    }
+  }catch(e){}
+}
+async function toggleVideo(){
+  const en = document.getElementById('videoEnabled').checked;
+  await fetch('/api/video', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: en})});
+  camsInit = false;
+}
+async function tickQ(){
+  try{
+    const d = await (await fetch('/api/queue')).json();
+    const c = document.getElementById('q'), x = c.getContext('2d');
+    c.width = c.clientWidth; c.height = c.clientHeight || 72;
+    const W = c.width, H = c.height;
+    const barTop = 6, barH = H - 26;   // 底部留 20px 给 alpha/ts 文字
+    // 每个动作块固定宽度（22px），背景画出 chunk 容量槽位，空槽即余量缺口；
+    // 槽位数超出画布时才等比缩小
+    const slots = Math.max(d.chunk_size || 0, d.entries.length, 1);
+    const bw = Math.min(22, W / slots);
+    x.clearRect(0, 0, W, H);
+    x.font = '9px monospace';
+    x.fillStyle = '#222';
+    for(let i = 0; i < slots; i++) x.fillRect(i * bw, barTop, Math.max(bw - 2, 1), barH);
+    d.entries.forEach((e, i) => {
+      let col = '#666';
+      if(e.src === 'new') col = '#3f3';
+      else if(e.src === 'agg') col = '#57a';
+      else if(e.src === 'blend'){
+        const g = Math.round(120 + e.alpha * 120);
+        col = `rgb(255,${g},0)`;  // alpha 越大越亮
+      }
+      x.fillStyle = col;
+      x.fillRect(i * bw, barTop, Math.max(bw - 2, 1), barH);
+      if(e.src === 'blend' && bw > 26){
+        x.fillStyle = '#000';
+        x.fillText(e.alpha.toFixed(2), i * bw + 2, barTop + barH + 11);
+      }
+      if(i % Math.ceil(slots / 8) === 0){
+        x.fillStyle = '#888';
+        x.fillText(e.ts, i * bw + 1, H - 3);
+      }
+    });
+    // 执行指针（latest_action 之后即为队首）
+    x.fillStyle = '#f66';
+    x.fillRect(0, 0, 2, barTop + barH + 2);
+  }catch(e){}
+}
+async function toggleControl(){
+  const cur = document.getElementById('ctrlBtn').dataset.active === '1';
+  await fetch('/api/control', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({task_active: !cur})});
+}
+async function tickControl(){
+  try{
+    const s = await (await fetch('/api/status')).json();
+    const b = document.getElementById('ctrlBtn');
+    b.dataset.active = s.task_active ? '1' : '0';
+    b.textContent = s.task_active ? '停止任务' : '启动任务';
+    b.style.background = s.task_active ? '#622' : '#242';
+  }catch(e){}
+}
+setInterval(tickControl, 500); tickControl();
+let presetsLoaded = false;
+async function loadPresets(){
+  try{
+    const d = await (await fetch('/api/task_presets')).json();
+    const sel = document.getElementById('preset');
+    Object.entries(d.presets || {}).forEach(([name, text]) => {
+      const o = document.createElement('option');
+      o.value = text; o.textContent = name;
+      sel.appendChild(o);
+    });
+    presetsLoaded = true;
+  }catch(e){}
+}
+function applyPreset(){
+  const sel = document.getElementById('preset');
+  if(!sel.value) return;
+  document.getElementById('task').value = sel.value;
+  setTask();
+  sel.selectedIndex = 0;
+}
+async function setTask(){
+  await fetch('/api/task', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({task: document.getElementById('task').value})});
+}
+const RTC_FIELDS = [
+  ['fps', '控制FPS', 'int'],
+  ['rtc_enabled', '启用RTC', 'check'],
+  ['rtc_lookahead_ratio', 'lookahead比例', 'float'],
+  ['rtc_blend_steps', '融合步数', 'int'],
+  ['rtc_action_ema_alpha', 'EMA alpha', 'float'],
+  ['rtc_ema_exclude_gripper', '夹爪不平滑', 'check'],
+  ['rtc_safety_margin_steps', '安全余量', 'int'],
+  ['rtc_latency_window', '延迟窗口', 'int'],
+  ['action_interp_steps', '插值细分', 'int'],
+];
+let rtcInit = false;
+async function loadRtc(force){
+  try{
+    const r = await (await fetch('/api/rtc')).json();
+    const div = document.getElementById('rtc');
+    if(!rtcInit){
+      rtcInit = true;
+      let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">';
+      RTC_FIELDS.forEach(([k, label, tp]) => {
+        if(tp === 'check')
+          html += `<label style="display:inline-flex;align-items:center;gap:3px">${label}<input type="checkbox" id="rtc_${k}" style="margin:0"></label>`;
+        else
+          html += `<label style="display:inline-flex;align-items:center;gap:4px">${label}<input type="number" step="any" id="rtc_${k}" style="width:60px;background:#000;color:#7f7;border:1px solid #444;padding:2px"></label>`;
+      });
+      html += `<button onclick="saveRtc()">应用</button><button onclick="loadRtc(true)" style="margin-left:8px;background:#333;border-color:#555">刷新</button></div>`;
+      div.innerHTML = html;
+    }
+    // 仅在初始化或手动刷新时填充，不再周期性覆盖用户未保存的编辑
+    if(!rtcInit && !force) return;
+    RTC_FIELDS.forEach(([k, , tp]) => {
+      const el = document.getElementById('rtc_' + k);
+      if(!el || (!force && document.activeElement === el)) return;
+      if(tp === 'check') el.checked = !!r[k]; else el.value = r[k];
+    });
+  }catch(e){}
+}
+async function saveRtc(){
+  const body = {};
+  RTC_FIELDS.forEach(([k, , tp]) => {
+    const el = document.getElementById('rtc_' + k);
+    body[k] = tp === 'check' ? el.checked : (tp === 'float' ? parseFloat(el.value) : parseInt(el.value));
+  });
+  const resp = await fetch('/api/rtc', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const r = await resp.json();
+  const msg = document.getElementById('rtcMsg');
+  msg.textContent = resp.ok ? '✓ 已生效' : ('✗ ' + (r.error || '失败'));
+  msg.style.color = resp.ok ? '#4f4' : '#f66';
+  setTimeout(() => msg.textContent = '', 3000);
+  if(resp.ok) loadRtc(true);  // 保存成功后用服务器返回值回填
+}
+setInterval(tick, 500); setInterval(tickQ, 300); tick(); tickQ(); loadRtc(); loadPresets();
+</script></body></html>

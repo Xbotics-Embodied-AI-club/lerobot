@@ -176,3 +176,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+# Xbotics：网页标定的 SO101 模型随包发布
+!src/lerobot/xbotics/calibrate_web/model/**/*.stl
+!src/lerobot/xbotics/calibrate_web/model/**/*.urdf

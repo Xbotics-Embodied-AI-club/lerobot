@@ -1,0 +1,19 @@
+{
+  "name": "so101-calibration-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "SO101 网页标定工作台前端",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "0.186.1",
+    "urdf-loader": "0.13.1"
+  },
+  "devDependencies": {
+    "vite": "8.3.5"
+  }
+}

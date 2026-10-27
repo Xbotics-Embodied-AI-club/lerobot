@@ -40,6 +40,8 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(lingbot_vla_v2)` | **LingBot 训练改成官方配方**：fp32 主权重、Muon、分位数归一化；`lerobot-train --gradient_accumulation_steps`；RoboTwin clean 转换脚本。见下「LingBot-VLA 2.0」。 |
 | `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：主从两条臂的串口、顶视与腕部两路相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
 | `feat(board)` | **端侧板配网页**（RK3566）：板子一直开着热点，连上后在浏览器里给板子连 Wi-Fi、设网线，结果实时显示，见下「端侧板：配网页」。 |
+| `fix(async_inference)` | **policy_server 两处防僵死**：推理成功后才记「这一步已推理」，失败时把「上次推理过的观测」还原；机械臂不动、观测全被相似度检查滤掉时，5 秒没有观测入队就强制放最新一帧（`--similarity_stall_timeout`）。见下「网页工具」。 |
+| `feat(xbotics)` | **三个网页工具**：硬件检测 `lerobot-hardware-check`（8005）、SO101 网页标定 `lerobot-calibrate-web`（8006）、带 Web 控制台与 RTC 的推理客户端 `lerobot-inference-console`（8007），装 `lerobot[xbotics_tools]`。见下「网页工具」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
@@ -227,7 +229,7 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
 
 仿真依赖带了平台标记 —— mani-skill 的物理后端 `sapien` 不发 aarch64 轮子，板端不跑仿真，安装不受影响。
 板端只做舵机、相机、录数据与远程推理客户端，0.6 线要装 **`lerobot[feetech,async,dataset,viz]`**
-（0.6 起 datasets 与 rerun 都不在核心依赖里了）。硬件编码、统计抽样、网页预览三项自动生效（见上一节）。另有几处要在板子自己的环境里处理：
+（0.6 起 datasets 与 rerun 都不在核心依赖里了）；要用下面「网页工具」一节的三个网页再加 `xbotics_tools`。硬件编码、统计抽样、网页预览三项自动生效（见上一节）。另有几处要在板子自己的环境里处理：
 
 - **torch**：上游 aarch64 轮子从 2.10 起在 ARMv8.0 核（A53 / A72）上一导入就 `Illegal instruction`；
   这类板子钉 `torch==2.9.1`。A55（RK3566，ARMv8.2）上 2.10 实测可用。
@@ -317,6 +319,104 @@ NetworkManager 1.36 的两个坑，代码里已绕开：
 实测（2026-10-19，ZTL A566）：热点开着时连 Wi-Fi、输错密码、删 Wi-Fi、改网线固定 IP，热点一次没断；输错密码不坏旧配置；
 带 Android、Apple、Windows 联网检测地址的请求都跳到配网页；重启后热点、页面、Wi-Fi 与网线设置都自动恢复。
 2026-10-21 改成 80 与 8001 同时开：两个端口都回页面，联网检测请求在 80 上照旧跳到配网页。
+
+## 网页工具：硬件检测、标定、推理控制台
+
+板子不开桌面，学员手里只有浏览器。下面三个工具在板子（或任何接着机械臂的机器）上跑，
+学员在自己电脑上打开 `http://<板子IP>:<端口>`；端口接着板子上 8001–8004 的连号，默认监听全部网卡。
+套件板子上硬件检测与网页标定装成服务，用 `xbotics-config` 开关（见下「板子上的开关」）；在别的机器上直接敲命令起，Ctrl+C 关掉。
+推理控制台要给服务端地址和模型，总是按需敲命令起。移植自 gitee [`zhuzhuangtian/lerobot-v0.5.1-custom`](https://gitee.com/zhuzhuangtian/lerobot-v0.5.1-custom/tree/master/lerobot_tools)
+的 `lerobot_tools`，按本线改过，改了什么写在各自的模块说明里。
+
+```bash
+pip install "lerobot[feetech,async,xbotics_tools] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-0.6"
+```
+
+| 命令 | 端口 | 做什么 |
+|---|---|---|
+| `lerobot-hardware-check` | 8005 | 每个 USB 相机一张实时画面（标出协商到的分辨率、格式、帧率；芯片自带的视频节点默认不列，`--all-cameras` 全列）；串口列表与「插拔对比」找机械臂串口（板载串口有固定名字时也列出）；每条串口一个「读电机」按钮：扫总线上的舵机，读一次位置、电压、温度、电流、负载、力矩开关与状态码，只读不写 |
+| `lerobot-calibrate-web` | 8006 | SO101 主臂 / 从臂网页标定：3D 模型演示每一步该怎么摆，逐关节记行程、单独校验、可单关节重来；写入后回读核对；取消或失败自动恢复标定前的备份，出错的会话不挡新会话 |
+| `lerobot-inference-console` | 8007 | 远程推理客户端 + 网页控制台：相机画面、动作队列可视化、推理延迟；网页上改任务、启停、热调 RTC 参数 |
+
+### 板子上的开关：`xbotics-config`
+
+像树莓派的 `raspi-config`：不带参数弹出菜单，空格勾选要开的网页服务、回车生效（开的会开机自启）；也能直接敲子命令。
+管 8002 网页终端、8003 JupyterLab、8004 VS Code、8005 硬件检测、8006 网页标定五个；8001 网络设置页一直开着，不在这里（关了就没法从热点进板子改网络）。
+
+```bash
+xbotics-config                            # 菜单（要 whiptail）
+xbotics-config status                     # 每个服务开没开、在不在跑、网址
+xbotics-config enable hardware-check calibrate
+xbotics-config disable calibrate          # 名字：terminal jupyter vscode hardware-check calibrate，all = 全部
+```
+
+装（板子上，root；8005、8006 两个服务用的是安装手册里那个 LeRobot 环境 `/root/xbotics/.venv`，要先给它加上 `xbotics_tools`）：
+
+```bash
+apt-get install -y whiptail
+base=https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/config
+curl -fsSL $base/xbotics-config -o /usr/local/bin/xbotics-config && chmod +x /usr/local/bin/xbotics-config
+curl -fsSL $base/xbotics-hardware-check.service -o /etc/systemd/system/xbotics-hardware-check.service
+curl -fsSL $base/xbotics-calibrate-web.service -o /etc/systemd/system/xbotics-calibrate-web.service
+systemctl daemon-reload
+xbotics-config enable hardware-check calibrate
+```
+
+- 在网页终端里关网页终端会把自己这个页面断开，菜单里会先问一次。
+- 两个服务空闲时各占约 290 MB 内存（LeRobot 连带导入 torch），都开着板子还剩约 3 GB 可用（RK3566 4 GB 实测）。
+- 硬件检测读电机、看相机画面时，与正在用同一条臂或同一路相机的程序（录数据、推理、网页标定）会互相打乱：
+  串口与相机都不加锁，由用的人避开 —— 录数据、推理前关掉看相机的页面，别在录的时候点「读电机」。
+
+### 网页标定
+
+```bash
+lerobot-calibrate-web                                     # 板子上：串口默认取 /dev/xbotics/leader、/dev/xbotics/follower，id 默认 leader、follower
+lerobot-calibrate-web --follower-port /dev/ttyACM0 --follower-id my_follower --leader-id my_leader
+lerobot-calibrate-web --demo                              # 不接硬件，把流程走一遍（模拟舵机，不碰标定文件）
+```
+
+- 步骤与 `lerobot-calibrate` 相同（卸力 → 切位置模式 → 中位记 homing offset → 除腕部旋转外记行程 → 写入），
+  标定文件也写在同一个地方（`$HF_LEROBOT_CALIBRATION/{robots,teleoperators}/<类型>/<id>.json`）——
+  之后录数据、推理时 `--robot.id` / `--teleop.id` 给同一个 id 就直接用上。
+- 与命令行的差别：一个关节一个关节录，每个关节单独校验（行程够不够 50 个码值、中位在不在范围里），哪个不对只重来哪个；
+  开始前把舵机里的标定和原标定文件备份到标定文件旁的 `backups/`，取消或写入回读不一致时放回去。
+- 中文语音提示用微软 edge-tts 在线合成（要联网），连不上时页面只显示文字，标定照样走得完；合成过的句子缓存在 `$HF_LEROBOT_HOME/calibration_tts/`。
+- 3D 模型随包发布：从臂用星禾套件的仿真模型（与 [Xbotics-SO101-Sim](https://github.com/Xbotics-Embodied-AI-club/Xbotics-SO101-Sim) 同一份，连底板、型材架、顶视与腕部相机支架一起显示；半透明的目标姿态只画手臂），主臂用官方 SO101 主臂模型。`.gitattributes` 让这些 STL 不走 LFS——走 LFS 的话从 git 装下来是指针文件，页面加载不出模型。
+- 改前端：`xbotics/calibrate_web_frontend/` 里 `npm ci && npm run build`，产物直接写进 `src/lerobot/xbotics/calibrate_web/static/`，一起提交。
+
+### 推理控制台
+
+服务端照旧是 `python -m lerobot.async_inference.policy_server`；板子上用它替代 `robot_client`：
+
+```bash
+lerobot-inference-console \
+    --robot.type=so101_follower --robot.port=/dev/xbotics/follower --robot.id=follower \
+    --robot.cameras="$CAMERAS" \
+    --task="Grab the cube" \
+    --policy_type=act --pretrained_name_or_path=<模型> --policy_device=cuda \
+    --server_host=127.0.0.1 --server_port=8080 --actions_per_chunk=50 --fps=30
+```
+
+`$CAMERAS` 与连服务器的 SSH 隧道照板子使用手册第 6.1、8.2 节；`--server_host=127.0.0.1` 就是走那条隧道。
+
+- 相机画面默认压 JPEG 再发（`--observation_jpeg_quality=90`，与 `robot_client` 同一个实现；设 0 发原图），发送在后台线程。
+- **RTC**（默认开，`--rtc_enabled`）：按最近几次推理延迟估计何时要下一个动作块，赶在旧块用完前到；
+  新旧块重叠的开头 `--rtc_blend_steps` 步线性过渡；执行层 EMA 平滑（`--rtc_action_ema_alpha`，夹爪不平滑）；
+  推理慢时可用 `--action_interp_steps=N` 把每个动作插成 N 个子步，控制循环照样跑高频。这些参数都能在网页上改，下一个控制周期生效。
+- 网页上「停止任务」时动作停、观测照发，服务端回来的动作块丢掉；给了 `--home_action='{shoulder_pan.pos: 0, ...}'` 就同时回到这个姿态。
+  `--task_presets_file=<yaml>` 里写 `tasks: {名字: 任务文本}`，网页下拉框里就能选。
+- `--transport=websocket` 改连 LingBot-VLA 官方推理服务（msgpack 协议，`--ws_host` / `--ws_robo_name` 必填，模型由服务端定、不用给 `--pretrained_name_or_path`；每条观测只推一次）；
+  本线自己的 LingBot（`--policy_type=lingbot_vla_v2`）走默认的 gRPC 就行。
+- 控制台没有登录，监听全部网卡时同一网络里谁都能打开；只在本机看就给 `--webui_host=127.0.0.1`。
+
+### policy_server 防僵死
+
+上游的 policy_server 在两种情况下会让客户端永远等不到动作块：① 收到观测就先记「这一步已推理」，推理一失败动作块丢了，
+客户端还停在这一步、重发的观测又被「已推理」挡掉；② 机械臂不动时每帧都和上一帧相似，全被相似度检查滤掉，
+客户端那条必须推理的观测（must_go）一旦丢了就再也没有新动作块。现在推理和序列化都成了才记「已推理」，
+推理失败时把「上次推理过的观测」还原成失败前那一帧（否则静止时重发的观测与失败帧相似，照样被滤掉）；
+超过 `--similarity_stall_timeout`（默认 5 秒）没有观测入队，就把最新一帧强制放进去。对 `robot_client` 与推理控制台都生效。
+单次推理超过 5 秒（CPU 推理、首次加载）时兜底会让推理一个接一个连着跑，只是浪费、不出错；那种情况把这个值调大。
 
 ## 从 0.5 线迁到 0.6 线要改什么
 

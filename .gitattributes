@@ -19,3 +19,5 @@
 *.json !text !filter !merge !diff
 tests/artifacts/cameras/*.png filter=lfs diff=lfs merge=lfs -text
 *.bag filter=lfs diff=lfs merge=lfs -text
+# Xbotics：网页标定的 SO101 模型随包发布，必须是普通文件 —— 走 LFS 的话 pip 从 git 装下来的是指针文件，页面加载不出模型
+src/lerobot/xbotics/calibrate_web/model/**/*.stl !filter !diff !merge -text

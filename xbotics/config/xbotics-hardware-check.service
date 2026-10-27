@@ -1,0 +1,13 @@
+[Unit]
+Description=Xbotics kit: 网页硬件检测：相机画面、串口、读电机（8005）
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/root/xbotics/.venv/bin/lerobot-hardware-check
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
