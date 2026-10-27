@@ -385,6 +385,9 @@ def test_failed_write_can_be_cancelled_and_restarted(monkeypatch):
     assert response.status_code == 200
     assert response.get_json()["phase"] == "cancelled"
     assert session.device.calibration_fpath.read_text(encoding="utf-8") == '{"old": true}'
+    # 串口在写入失败后已经关了：取消时重新打开一次，把舵机里的标定也放回去
+    assert session.device.bus.calibration == session.backup.motor_calibration
+    assert not session.device.bus.is_connected
 
     assert client.post("/api/session", json={"target": "follower", "demo": True}).status_code == 201
     manager.get().cleanup()
@@ -402,3 +405,33 @@ def test_session_stuck_in_error_does_not_block_a_new_one(monkeypatch):
     assert manager.get() is not stuck
     assert not stuck.connected
     manager.get().cleanup()
+
+
+def test_cancel_clears_a_stuck_port_flag_before_restoring():
+    """别的程序同时读这条串口会让 SDK 的占用标记卡住（Port is in use）：取消时先清掉再放回舵机标定。"""
+
+    class StuckPort:
+        is_using = False
+
+    class StuckBus(DemoBus):
+        def __init__(self):
+            super().__init__()
+            self.port_handler = StuckPort()
+
+        def write_calibration(self, calibration_dict, cache=True):
+            if self.port_handler.is_using:
+                raise ConnectionError("[TxRxResult] Port is in use!")
+            super().write_calibration(calibration_dict, cache)
+
+    session = demo_session()
+    session.device.bus = StuckBus()
+    original = clone_calibration(session.device.bus.calibration)
+    session.start()
+    try:
+        session.confirm_middle()
+        session.device.bus.port_handler.is_using = True  # 被别的读写打断，卡在占用
+        session.cancel()
+        assert session.phase == "cancelled"
+        assert session.device.bus.calibration == original
+    finally:
+        session.cleanup()

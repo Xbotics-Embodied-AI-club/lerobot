@@ -36,6 +36,14 @@ SAMPLE_PERIOD_S = 0.05
 # 串口偶尔丢一帧不该让整个会话报错：采样与 ping 都多试几次
 READ_RETRIES = 2
 PING_RETRIES = 3
+RESTORE_ATTEMPTS = 3
+
+
+def _release_port(bus):
+    """清掉飞特 SDK 的「端口占用」标记：一次收发被打断（比如别的进程同时读这条串口）后它会卡在占用，之后的读写都报 Port is in use。"""
+    port_handler = getattr(bus, "port_handler", None)
+    if port_handler is not None:
+        port_handler.is_using = False
 
 
 class CalibrationSession:
@@ -324,12 +332,41 @@ class CalibrationSession:
         self._stop_sampler()
 
     def _restore_locked(self):
+        """放回开始前的舵机标定与标定文件；放不回去时返回原因（不抛）。
+
+        串口已经关了（写入失败之后）就重新打开一次再放；串口被别的读写打乱、SDK 的「占用」标记卡住时先清掉再试。
+        实在放不回舵机，也要放回文件，并说清楚备份在哪。
+        """
+        bus = self.device.bus
+        reopened = False
         try:
-            # 串口已经断开（写入失败后、或中途拔线）时舵机写不进去，只放回标定文件
-            self.backup.restore(motors=self.connected and self.device.bus.is_connected)
-            return None
+            if not bus.is_connected:
+                try:
+                    bus.connect()
+                    reopened = True
+                except Exception as error:
+                    self.backup.restore(motors=False)
+                    return (
+                        f"标定文件已放回，但重新打开串口失败，舵机里的标定没能放回"
+                        f"（备份在 {self.backup.backup_path}）：{error}"
+                    )
+            last_error = None
+            for _ in range(RESTORE_ATTEMPTS):
+                _release_port(bus)
+                try:
+                    self.backup.restore()
+                    return None
+                except Exception as error:
+                    last_error = error
+                    time.sleep(0.2)
+            self.backup.restore(motors=False)
+            return f"标定文件已放回，舵机里的标定没能放回（备份在 {self.backup.backup_path}）：{last_error}"
         except Exception as error:
             return str(error)
+        finally:
+            if reopened:
+                with suppress(Exception):
+                    bus.disconnect(disable_torque=False)
 
     def cancel(self):
         self._stop_sampler()
