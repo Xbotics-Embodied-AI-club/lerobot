@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "SO101 网页标定工作台前端",
+  "description": "星禾套件网页标定前端",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

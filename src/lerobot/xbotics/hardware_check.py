@@ -476,7 +476,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>摄像头 / 串口检测</title>
+<title>星禾套件 · 硬件检测</title>
 <style>
   body { font-family: sans-serif; margin: 0; padding: 16px; background: #1e1e1e; color: #ddd; }
   h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 28px; }
@@ -499,27 +499,24 @@ INDEX_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>摄像头 / 串口 网页检测工具</h1>
+<h1>星禾套件 · 硬件检测</h1>
 
-<h2>摄像头实时画面</h2>
-<button onclick="loadCameras()">重新扫描摄像头</button>
+<h2>相机</h2>
+<button onclick="loadCameras()">重新扫描</button>
 <span id="cam-status" class="hint"></span>
 <div id="cameras" class="grid"></div>
 
-<h2>串口设备</h2>
-<button onclick="loadPorts()">刷新串口列表</button>
-<span class="hint">找机械臂端口号：</span>
-<button class="secondary" onclick="snapshotPorts()">① 记录基准（插着 USB 时点击）</button>
-<button class="secondary" onclick="diffPorts()">② 拔掉 USB 后点击，对比差异</button>
+<h2>串口</h2>
+<button onclick="loadPorts()">刷新</button>
+<button class="secondary" onclick="snapshotPorts()">① 插着 USB 记录</button>
+<button class="secondary" onclick="diffPorts()">② 拔掉 USB 对比</button>
 <div id="diff-result"></div>
 <table id="ports-table">
-  <thead><tr><th>端口</th><th>固定名字</th><th>描述</th><th>VID:PID</th><th>硬件 ID</th><th>电机</th></tr></thead>
+  <thead><tr><th>端口</th><th>固定名字</th><th>描述</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
-<h2>电机状态</h2>
-<span class="hint">点串口那一行的「读电机」，扫这条总线上的舵机并读一次当前状态；只读不写，不改力矩。报警的舵机也会列出来，报警原因在最后一列。
-录数据、推理、网页标定正在用这条臂时别点，同时读会互相打乱数据。</span>
+<h2>电机</h2>
 <div id="motors-result"></div>
 
 <script>
@@ -528,7 +525,7 @@ async function loadCameras() {
   status.textContent = ' 扫描中…';
   const res = await fetch('/api/cameras?refresh=1');
   const cams = await res.json();
-  status.textContent = ` 共 ${cams.length} 个`;
+  status.textContent = '';
   const box = document.getElementById('cameras');
   box.innerHTML = '';
   for (const c of cams) {
@@ -536,13 +533,13 @@ async function loadCameras() {
     card.className = 'card';
     card.dataset.src = c.source;
     const src = encodeURIComponent(c.source);
-    const size = c.width > 0 ? `　${c.width}×${c.height}${c.format ? ' ' + c.format : ''}` : '';
-    const fixed = c.fixed_name ? `　<span class="fixed">${c.fixed_name}</span>` : '';
+    const size = c.width > 0 ? `　${c.width}×${c.height}` : '';
+    const label = c.fixed_name ? `<span class="fixed">${c.fixed_name}</span>` : c.source;
     const initStatus = c.error
       ? `<div class="stream-status err">${c.error}，持续重试中…</div>`
       : `<div class="stream-status hint">连接中…</div>`;
     card.innerHTML =
-      `<div class="title mono">${c.name || '(未知设备)'}　${c.source}${fixed}${size}</div>` +
+      `<div class="title mono" title="${c.name || ''}　${c.source}">${label}${size}</div>` +
       initStatus +
       // 打不开的设备也挂上流地址：服务端每 3 秒自动重试，恢复后画面自动出现
       `<img src="/stream?src=${src}" alt="${c.source}" style="opacity:0"` +
@@ -563,8 +560,7 @@ async function updateStreamStats() {
       const st = await res.json();
       const el = card.querySelector('.stream-status');
       if (el) {
-        const fmt = st.format ? `　${st.format}` : '';
-        el.textContent = st.fps > 0.05 ? `${st.status}　${st.fps.toFixed(1)} fps${fmt}` : st.status;
+        el.textContent = st.fps > 0.05 ? `${st.status}　${st.fps.toFixed(1)} fps` : st.status;
         el.className = 'stream-status hint' +
           (st.status === '推流中' ? ' ok' : (st.status === '未启动' ? '' : ' err'));
       }
@@ -585,10 +581,9 @@ function renderPorts(ports) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="mono"><b>${p.device}</b></td>` +
       `<td class="mono fixed">${p.fixed_name || ''}</td>` +
-      `<td>${p.description || ''}</td>` +
-      `<td class="mono">${p.vid_pid || ''}</td>` +
-      `<td class="mono">${p.hwid || ''}</td>` +
-      `<td><button class="secondary" onclick="readMotors('${p.device}', '${p.fixed_name || ''}')">读电机</button></td>`;
+      `<td title="${[p.vid_pid, p.hwid].filter(Boolean).join('　')}">${p.description || ''}</td>` +
+      `<td><button class="secondary" title="只读不写；录数据、推理、标定正在用这条臂时别点"` +
+      ` onclick="readMotors('${p.device}', '${p.fixed_name || ''}')">读电机</button></td>`;
     tbody.appendChild(tr);
   }
 }
@@ -637,7 +632,7 @@ async function readMotors(port, fixedName) {
   box.innerHTML = `<span class="hint">正在读 ${label} …</span>`;
   try {
     const res = await fetch('/api/motors?port=' + encodeURIComponent(port));
-    if (!res.ok) throw new Error(`HTTP ${res.status}（串口可能已拔掉，先点「刷新串口列表」）`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}（串口可能已拔掉，先点「刷新」）`);
     const r = await res.json();
     const fmt = v => (v === null || v === undefined) ? '—' : v;
     let html = `<div class="title mono" style="margin-top:8px">${label}：扫到 ${r.motors.length} 个舵机</div>`;

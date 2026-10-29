@@ -1,5 +1,5 @@
 [Unit]
-Description=Xbotics kit: SO101 网页标定（8006）
+Description=Xbotics kit: 网页标定（8006）
 After=network.target
 
 [Service]

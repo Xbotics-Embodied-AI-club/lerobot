@@ -177,5 +177,5 @@ def run_server(
     address = f"http://{shown_host}:{port}"
     if open_browser:
         threading.Timer(1, webbrowser.open, args=(address,)).start()
-    print(f"SO101 网页标定: {address}" + ("（局域网里用这台机器的 IP 打开）" if host == "0.0.0.0" else ""))
+    print(f"星禾套件网页标定: {address}" + ("（局域网里用这台机器的 IP 打开）" if host == "0.0.0.0" else ""))
     app.run(host=host, port=port, threaded=True, use_reloader=False)

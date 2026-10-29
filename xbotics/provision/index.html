@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Xbotics 板子网络设置</title>
+<title>星禾套件 · 网络设置</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f4f6f8; color: #1f2933; }
   main { max-width: 760px; margin: 0 auto; padding: 16px; }
@@ -36,8 +36,8 @@
 </head>
 <body>
 <main>
-  <h1>Xbotics 板子网络设置</h1>
-  <div class="sub">板子名字：<b id="host">…</b>（局域网里也可以用 <b id="mdns">…</b> 找到它）</div>
+  <h1>星禾套件 · 网络设置</h1>
+  <div class="sub"><b id="host">…</b> · <b id="mdns">…</b></div>
 
   <div class="cards">
     <div class="card"><h2>网线</h2><div id="eth"></div></div>
@@ -46,9 +46,8 @@
   </div>
 
   <section id="links-box" hidden>
-    <h2>板子连上网以后，从你自己的网络打开</h2>
+    <h2>从你自己的网络打开</h2>
     <div class="links" id="links"></div>
-    <div class="hint">先把电脑 / 手机切回你自己的 Wi-Fi 或网线，再点上面的地址。</div>
   </section>
 
   <section>
@@ -56,8 +55,8 @@
     <button class="ghost" id="scan">扫描附近的 Wi-Fi</button>
     <div id="nets" style="margin-top:8px"></div>
     <div class="grid2" style="margin-top:8px">
-      <input id="ssid" placeholder="Wi-Fi 名字（点上面的列表或手动填）">
-      <input id="pw" type="password" placeholder="密码（没有就留空）">
+      <input id="ssid" placeholder="Wi-Fi 名字">
+      <input id="pw" type="password" placeholder="密码">
     </div>
     <div style="margin-top:8px"><button id="connect">连接</button></div>
     <div id="saved" class="hint"></div>
@@ -74,8 +73,7 @@
         <label class="field">DNS（空格隔开）<input id="dns" value="223.5.5.5 119.29.29.29"></label>
       </div>
     </div>
-    <div style="margin-top:8px"><button id="wired">保存网线设置</button></div>
-    <div class="hint">如果你是插着网线打开的这个页面，改网线设置时连接会断一下；改成固定 IP 后要用新地址打开。</div>
+    <div style="margin-top:8px"><button id="wired">保存</button></div>
   </section>
 
   <div id="msg" class="msg" hidden></div>
@@ -109,8 +107,8 @@ async function refresh() {
     `<div class="row"><span class="label">名字</span>${esc(s.hotspot.ssid)}</div><div class="row"><span class="label">地址</span>${esc(s.hotspot.address)}</div>`;
   const ips = [...s.ethernet.addresses, ...s.wifi.addresses].map((a) => a.split("/")[0]);
   $("links-box").hidden = ips.length === 0;
-  // 四个网页服务连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code
-  const services = [[8001, "网络设置页（本页）"], [8002, "网页终端"], [8003, "JupyterLab"], [8004, "浏览器版 VS Code"]];
+  // 六个网页服务连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code · 8005 硬件检测 · 8006 网页标定
+  const services = [[8001, "网络设置"], [8002, "网页终端"], [8003, "JupyterLab"], [8004, "VS Code"], [8005, "硬件检测"], [8006, "网页标定"]];
   $("links").innerHTML = [s.mdns, ...ips].map((h) => `<div class="host">` + services.map(([port, name]) =>
     `<a href="http://${h}:${port}" target="_blank">${name} http://${esc(h)}:${port}</a>`).join("") + `</div>`).join("");
   $("saved").innerHTML = s.saved_wifi.length ? "已保存的 Wi-Fi：" + s.saved_wifi.map((n) =>

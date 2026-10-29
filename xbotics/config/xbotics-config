@@ -12,9 +12,9 @@ set -euo pipefail
 SERVICES=(
   "terminal|8002|ttyd|网页终端"
   "jupyter|8003|xbotics-jupyter|JupyterLab"
-  "vscode|8004|code-server@root|浏览器版 VS Code"
-  "hardware-check|8005|xbotics-hardware-check|硬件检测（相机画面、串口、读电机）"
-  "calibrate|8006|xbotics-calibrate-web|SO101 网页标定"
+  "vscode|8004|code-server@root|VS Code"
+  "hardware-check|8005|xbotics-hardware-check|硬件检测"
+  "calibrate|8006|xbotics-calibrate-web|网页标定"
 )
 
 field() { # field <服务行> <第几列>
@@ -153,8 +153,8 @@ menu() {
     fi
     items+=("$name" "$(field "$row" 2)  $(field "$row" 4)" "$state")
   done
-  chosen=$(whiptail --title "Xbotics 板子网页服务" --checklist \
-    "空格勾选要开的服务，回车生效（开的会开机自启）。8001 网络设置页一直开着，不在这里。" \
+  chosen=$(whiptail --title "星禾套件 · 网页服务" --checklist \
+    "空格勾选，回车生效" \
     18 78 ${#SERVICES[@]} "${items[@]}" 3>&1 1>&2 2>&3) || rc=$?
   if [[ $rc -eq 1 || $rc -eq 255 ]]; then
     exit 0 # 取消或按了 Esc

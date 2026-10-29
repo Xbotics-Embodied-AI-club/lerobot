@@ -2,7 +2,6 @@ import './styles.css';
 import { CalibrationViewer } from './model-viewer.js';
 import {
   JOINT_ORDER,
-  JOINT_META,
   STATUS_TEXT,
   PHASE_TEXT,
   ACTION_TEXT,
@@ -140,7 +139,7 @@ function setViewerMessage(kind, text) {
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
     const label = document.createElement('p');
-    label.textContent = text || '正在加载 SO101 模型…';
+    label.textContent = text || '正在加载模型…';
     box.append(spinner, label);
     return;
   }
@@ -151,22 +150,17 @@ function setViewerMessage(kind, text) {
     icon.textContent = '!';
     const title = document.createElement('h3');
     title.textContent = '3D 模型加载失败';
-    const label = document.createElement('p');
-    label.textContent = text || '模型加载失败，表单操作不受影响。';
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn small ghost';
-    retry.textContent = '重试加载模型';
+    retry.textContent = '重试';
     retry.addEventListener('click', () => viewer?.load());
-    box.append(icon, title, label, retry);
+    box.append(icon, title, retry);
   }
 }
 
 function handleModelStatus({ status, text }) {
   state.modelStatus = status;
-  const label = $('viewerModelState');
-  label.textContent = status === 'ready' ? '模型已就绪' : status === 'error' ? '模型不可用' : text;
-  label.dataset.state = status;
   setViewerMessage(status, text);
   updateViewerButtons();
 }
@@ -210,7 +204,6 @@ function renderDeviceOptions(devices) {
     const parts = [device.port, device.id ? `ID ${device.id}` : null, device.type].filter(Boolean);
     element.textContent = parts.join(' · ') || '设备信息未知';
   }
-  $('deviceRaw').textContent = devices ? JSON.stringify(devices, null, 2) : '—';
   updatePortOptions();
 }
 
@@ -229,9 +222,6 @@ function updatePortOptions() {
   if (defaultPort) select.value = defaultPort;
   const demo = $('demoToggle').checked;
   select.disabled = demo || devices.length === 0;
-  $('portHint').textContent = demo
-    ? '演示模式不使用真实串口。'
-    : '默认是启动时给的串口（板子上是 /dev/xbotics/…），也可选择当前检测到的其他串口。';
 }
 
 async function loadDevices() {
@@ -265,24 +255,6 @@ function renderDeviceSummary() {
   const demo = snapshot?.demo ?? $('demoToggle').checked;
   $('summaryDemo').textContent = snapshot ? (demo ? '演示模式' : '实机模式') : demo ? '演示模式' : '实机模式';
   $('summaryDemo').classList.toggle('demo', Boolean(demo));
-
-  const badge = $('sessionBadge');
-  if (snapshot) {
-    const dotClass = snapshot.connected
-      ? 'pass'
-      : snapshot.phase === 'done'
-        ? 'pass'
-        : snapshot.phase === 'cancelled'
-          ? 'pending'
-          : 'error';
-    badge.classList.remove('hidden');
-    badge.innerHTML = `<i class="dot ${dotClass}"></i>${esc(
-      targetLabel(snapshot.target),
-    )} · ${snapshot.demo ? '演示模式' : '实机模式'}`;
-  } else {
-    badge.classList.add('hidden');
-    badge.textContent = '';
-  }
 }
 
 function renderSteps() {
@@ -318,67 +290,16 @@ function renderSteps() {
     }
   });
 
-  const effective = effectivePhase(snapshot);
   const phaseBadge = $('phaseBadge');
   phaseBadge.textContent = snapshot ? phaseText(phase) : '待连接';
   phaseBadge.className = `phase-badge phase-${snapshot ? phase : 'idle'}`;
-
-  const footer = $('footerPhase');
-  footer.textContent = snapshot
-    ? `${targetLabel(snapshot.target)} · ${phaseText(phase)}`
-    : '尚未连接设备';
 
   const errorBox = $('footerError');
   const message = snapshot?.error || '';
   errorBox.textContent = message;
   errorBox.classList.toggle('hidden', !message);
 
-  renderRangeProgress(snapshot);
   renderReview(snapshot);
-  updateHud(snapshot, effective);
-}
-
-function updateHud(snapshot, effective) {
-  $('hudPhase').textContent = snapshot ? phaseText(snapshot.phase) : '等待会话';
-  const active = snapshot?.active_joint;
-  if (snapshot?.phase === 'ranges' && active) {
-    $('hudTarget').textContent = `目标：${jointLabel(active, snapshot.joints?.[active]?.label)} · 完整行程`;
-  } else if (snapshot?.phase === 'middle') {
-    $('hudTarget').textContent = '目标：六关节中位（0）';
-  } else {
-    $('hudTarget').textContent = effective ? '' : '连接设备后显示目标姿态';
-  }
-}
-
-function renderRangeProgress(snapshot) {
-  const box = $('rangeProgress');
-  if (snapshot?.phase !== 'ranges') {
-    box.classList.add('hidden');
-    box.replaceChildren();
-    return;
-  }
-  const joints = snapshot.joints || {};
-  const passCount = JOINT_ORDER.filter((name) => joints[name]?.status === 'pass').length;
-  const active = snapshot.active_joint;
-  const stageText = '自动记录';
-
-  box.classList.remove('hidden');
-  box.innerHTML = `
-    <div class="range-progress-head">
-      <span>限位记录</span>
-      <strong>${passCount} / ${JOINT_ORDER.length}</strong>
-    </div>
-    <div class="range-chips">
-      ${JOINT_ORDER.map((name) => {
-        const status = joints[name]?.status || 'pending';
-        const isActive = name === active;
-        return `<span class="range-chip ${status} ${isActive ? 'is-active' : ''}">
-          <i class="dot ${status}"></i>${esc(jointLabel(name, joints[name]?.label))}
-          ${isActive ? `<em>${esc(stageText)}</em>` : ''}
-        </span>`;
-      }).join('')}
-    </div>
-  `;
 }
 
 function renderReview(snapshot) {
@@ -399,7 +320,7 @@ function renderReview(snapshot) {
       <td>
         <span class="review-joint">
           <i class="dot ${status}"></i>
-          <span><strong>${esc(jointLabel(name, joint.label))}</strong><code>${esc(name)}</code></span>
+          <span><strong>${esc(jointLabel(name, joint.label))}</strong></span>
         </span>
       </td>
       <td>${fmtRange(joint.range_min, joint.range_max)}</td>
@@ -430,33 +351,12 @@ function renderInstruction() {
   $('instructionTitle').textContent = heading;
   $('instructionText').textContent = snapshot
     ? snapshot.instruction || PHASE_INSTRUCTION[phase] || PHASE_INSTRUCTION.middle
-    : '选择主臂或从臂并连接后，按提示完成标定。';
+    : '';
 
-  const stageBadge = $('stageBadge');
-  if (phase === 'ranges' && snapshot?.stage) {
-    stageBadge.classList.remove('hidden');
-    stageBadge.textContent = '自动记录极限';
-    stageBadge.className = 'stage-badge stage-range';
-  } else {
-    stageBadge.classList.add('hidden');
-  }
-
+  // 可执行的操作已经是底栏的按钮；这里只在出错时说明原因
   const hint = $('actionHint');
-  const actions = snapshot?.available_actions || [];
-  if (snapshot?.error) {
-    hint.textContent = snapshot.error;
-    hint.className = 'muted error-text';
-  } else if (actions.length) {
-    const shortcut = actions.some((action) => ['confirm_middle', 'confirm_limit'].includes(action)) ? '；按 Enter 确认' : '';
-    hint.textContent = `可执行：${actions.map((action) => ACTION_TEXT[action] || action).join(' / ')}${shortcut}`;
-    hint.className = 'muted';
-  } else if (snapshot) {
-    hint.textContent = snapshot.connected ? '等待设备状态更新…' : '设备未连接';
-    hint.className = 'muted';
-  } else {
-    hint.textContent = '连接后显示可执行操作';
-    hint.className = 'muted';
-  }
+  hint.textContent = snapshot?.error || '';
+  hint.className = snapshot?.error ? 'muted error-text' : 'muted';
 
   const card = $('instructionCard');
   card.className = `instruction-card phase-${phase || 'idle'}`;
@@ -474,7 +374,6 @@ function renderJoints() {
     const status = joint.status || 'pending';
     const label = jointLabel(name, joint.label);
     const isActive = name === active;
-    const meta = JOINT_META[name];
     const reason = joint.reason
       ? `<p class="joint-reason">${esc(joint.reason)}</p>`
       : '';
@@ -487,7 +386,7 @@ function renderJoints() {
     return `<article class="joint-card ${status} ${isActive ? 'is-active' : ''}" data-joint="${esc(name)}">
       <header class="joint-card-head">
         <span class="joint-index">${index + 1}</span>
-        <span class="joint-name"><strong>${esc(label)}</strong><code>${esc(meta?.short || name)}</code></span>
+        <span class="joint-name"><strong>${esc(label)}</strong></span>
         <span class="joint-status status-${status}"><i class="dot ${status}"></i>${esc(
           STATUS_TEXT[status] || status,
         )}</span>
@@ -743,7 +642,7 @@ async function connect() {
   } finally {
     state.connectPending = false;
     button.disabled = false;
-    button.textContent = '连接并开始标定';
+    button.textContent = '开始标定';
   }
 }
 
@@ -837,8 +736,10 @@ async function cancelCurrent() {
 }
 
 function setStreamStatus(mode, text) {
+  // 实时通道正常时不占位置，断了、重连中才露出来
   const indicator = $('streamIndicator');
   indicator.className = `status-pill ${mode}`;
+  indicator.classList.toggle('hidden', mode === 'online' || mode === 'neutral');
   indicator.querySelector('span').textContent = text;
 }
 
@@ -989,7 +890,7 @@ function bindEvents() {
 
 function init() {
   bindEvents();
-  setViewerMessage('loading', '正在加载 SO101 模型…');
+  setViewerMessage('loading', '正在加载模型…');
   viewer = new CalibrationViewer($('viewer'), { onStatus: handleModelStatus });
   viewer.load();
 

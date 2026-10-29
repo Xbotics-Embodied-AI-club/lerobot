@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>LeRobot 推理控制台</title>
+<html><head><meta charset="utf-8"><title>星禾套件 · 推理</title>
 <style>
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -28,16 +28,16 @@ button:hover{background:#353}
   #cams .cam{min-height:180px}
 }
 </style></head><body>
-<h2 id="devTitle">LeRobot 推理控制台</h2>
+<h2>星禾套件 · 推理</h2>
 <main>
 <div class="top">
 <div class="card">
-  <div class="row">任务: <input id="task"><select id="preset" onchange="applyPreset()"><option value="">预设任务…</option></select><button onclick="setTask()">更新任务</button>
+  <div class="row">任务 <input id="task"><select id="preset" onchange="applyPreset()"><option value="">预设…</option></select><button onclick="setTask()">更新</button>
   <button id="ctrlBtn" onclick="toggleControl()">停止任务</button></div>
   <div id="stats">加载中…</div>
 </div>
 <div class="card">
-  <div>运行参数（修改后点“应用”，下一控制周期生效）<span id="rtcMsg" style="margin-left:12px"></span></div>
+  <div>运行参数<span id="rtcMsg" style="margin-left:12px"></span></div>
   <div id="rtc" style="margin-top:8px"></div>
 </div>
 <div class="card">
@@ -52,8 +52,7 @@ button:hover{background:#353}
 </div>
 </div>
 <div class="card" id="camcard">
-  <div><label>视频推流<input type="checkbox" id="videoEnabled" onchange="toggleVideo()" checked></label>
-  <span style="color:#888;font-size:12px">（关闭后停止相机帧采集/编码，节省 CPU）</span></div>
+  <div><label title="关掉后不采集、不编码画面，省 CPU">画面<input type="checkbox" id="videoEnabled" onchange="toggleVideo()" checked></label></div>
   <div id="cams"></div>
 </div>
 </main>
@@ -62,10 +61,6 @@ let camsInit = false;
 async function tick(){
   try{
     const s = await (await fetch('/api/status')).json();
-    if(s.device_name){
-      document.getElementById('devTitle').textContent = '🤖 ' + s.device_name;
-      document.title = s.device_name;
-    }
     if(document.activeElement !== document.getElementById('task'))
       document.getElementById('task').value = s.task;
     document.getElementById('stats').innerHTML =
@@ -85,7 +80,7 @@ async function tick(){
     const vEl = document.getElementById('videoEnabled');
     if(document.activeElement !== vEl) vEl.checked = !!s.video_enabled;
     if(!s.video_enabled){
-      document.getElementById('cams').innerHTML = '<span style="color:#888">视频推流已关闭</span>';
+      document.getElementById('cams').innerHTML = '';
       camsInit = false;
     } else if(!camsInit && s.cams.length){
       camsInit = true;

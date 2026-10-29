@@ -250,7 +250,7 @@ export class CalibrationViewer {
     this.modelTarget = modelTarget;
     const modelUrl = MODEL_URLS[modelTarget];
     const token = ++this.loadToken;
-    this._setStatus('loading', `正在加载${modelTarget === 'leader' ? ' SO101 主臂' : '星禾套件从臂'}模型与网格…`);
+    this._setStatus('loading', `正在加载${modelTarget === 'leader' ? '主臂' : '从臂'}模型…`);
     this._disposeRobots();
     this.ready = false;
     this.sessionId = null;
@@ -283,7 +283,7 @@ export class CalibrationViewer {
     } catch (error) {
       if (token !== this.loadToken) return;
       console.error('SO101 模型加载失败', error);
-      this._setStatus('error', '模型加载失败，表单操作不受影响。');
+      this._setStatus('error', '');
     }
   }
 

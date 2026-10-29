@@ -22,7 +22,7 @@ DEFAULT_PORT = 8006
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SO101 网页交互式标定")
+    parser = argparse.ArgumentParser(description="星禾套件网页标定")
     parser.add_argument("--host", default="0.0.0.0", help="监听地址，默认 0.0.0.0（局域网可访问）")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"监听端口，默认 {DEFAULT_PORT}")
     parser.add_argument("--leader-port", default=None, help="主臂串口，默认 /dev/xbotics/leader（存在时）")

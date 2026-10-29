@@ -300,7 +300,7 @@ def test_webui_routes():
             return {"task_active": active}
 
     client = _create_app(FakeClient()).test_client()
-    assert "推理控制台" in client.get("/").get_data(as_text=True)
+    assert "星禾套件 · 推理" in client.get("/").get_data(as_text=True)
     assert client.get("/api/status").get_json() == {"task": "pick"}
     assert client.post("/api/rtc", json={"fps": 1}).status_code == 400
     client.post("/api/task", json={"task": "place"})

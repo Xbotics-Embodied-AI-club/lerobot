@@ -207,7 +207,7 @@ def test_disconnected_port_has_precise_error(tmp_path, monkeypatch):
     assert response.status_code == 503
     message = response.get_json()["error"]
     assert "COM_WRONG" in message
-    assert "SO101" in message
+    assert "不是机械臂" in message
     assert "未能建立连接" in message
 
 

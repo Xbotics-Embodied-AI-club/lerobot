@@ -102,7 +102,7 @@ class CalibrationSession:
                 ) from error
             if not self.device.bus.is_connected:
                 raise ConnectionError(
-                    f"{target_label}端口“{self.port}”未能建立连接。该端口可能不是 SO101 舵机控制板，"
+                    f"{target_label}端口“{self.port}”未能建立连接。该端口可能不是机械臂，"
                     "或设备已断开。请重新选择端口并检查 USB 连接。"
                 )
             with self._lock:
@@ -111,7 +111,7 @@ class CalibrationSession:
                     if self.device.bus.ping(name, num_retry=PING_RETRIES) is None:
                         raise ConnectionError(
                             f"{target_label}已在端口“{self.port}”打开串口，但关节 {self.joints[name]['label']}"
-                            f"（ID {self.joints[name]['id']}）无响应。请确认端口连接的是 SO101，"
+                            f"（ID {self.joints[name]['id']}）无响应。请确认端口连接的是机械臂，"
                             "并检查舵机供电、接线和 ID。"
                         )
                 self.backup.create()
