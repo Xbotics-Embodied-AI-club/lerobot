@@ -197,12 +197,8 @@ function renderDeviceOptions(devices) {
   for (const target of ['follower', 'leader']) {
     const element = $(`${target}Info`);
     const device = devices?.[target];
-    if (!device) {
-      element.textContent = '未检测到设备';
-      continue;
-    }
-    const parts = [device.port, device.id ? `ID ${device.id}` : null, device.type].filter(Boolean);
-    element.textContent = parts.join(' · ') || '设备信息未知';
+    // 串口在下面单独选；这里只在没检测到时提示
+    element.textContent = device ? '' : '未检测到';
   }
   updatePortOptions();
 }
@@ -214,9 +210,8 @@ function updatePortOptions() {
   const select = $('portSelect');
   select.innerHTML = devices.length
     ? devices.map((device) => {
-        const detected = state.serialPorts.find((port) => port.device === device);
-        const suffix = device === defaultPort ? '默认' : detected?.description || '已检测串口';
-        return `<option value="${esc(device)}">${esc(device)} · ${esc(suffix)}</option>`;
+        const suffix = device === defaultPort ? ' · 默认' : '';
+        return `<option value="${esc(device)}">${esc(device)}${suffix}</option>`;
       }).join('')
     : '<option value="">未发现可用串口</option>';
   if (defaultPort) select.value = defaultPort;
@@ -290,9 +285,6 @@ function renderSteps() {
     }
   });
 
-  const phaseBadge = $('phaseBadge');
-  phaseBadge.textContent = snapshot ? phaseText(phase) : '待连接';
-  phaseBadge.className = `phase-badge phase-${snapshot ? phase : 'idle'}`;
 
   const errorBox = $('footerError');
   const message = snapshot?.error || '';

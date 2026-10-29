@@ -547,7 +547,7 @@ async function loadCameras() {
     box.appendChild(card);
   }
   if (cams.length === 0) {
-    box.innerHTML = '<span class="warn">未检测到摄像头</span>';
+    box.innerHTML = '<span class="warn">未检测到相机</span>';
   }
 }
 
@@ -581,7 +581,7 @@ function renderPorts(ports) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="mono"><b>${p.device}</b></td>` +
       `<td class="mono fixed">${p.fixed_name || ''}</td>` +
-      `<td title="${[p.vid_pid, p.hwid].filter(Boolean).join('　')}">${p.description || ''}</td>` +
+      `<td title="${[p.vid_pid, p.hwid].filter(Boolean).join('　')}">${p.description && p.description !== 'n/a' ? p.description : ''}</td>` +
       `<td><button class="secondary" title="只读不写；录数据、推理、标定正在用这条臂时别点"` +
       ` onclick="readMotors('${p.device}', '${p.fixed_name || ''}')">读电机</button></td>`;
     tbody.appendChild(tr);

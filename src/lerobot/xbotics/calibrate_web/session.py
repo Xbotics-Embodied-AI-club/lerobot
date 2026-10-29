@@ -407,17 +407,14 @@ class CalibrationSession:
     @property
     def instruction(self):
         if self.phase == "middle":
-            return "请按目标动画将整臂移动到各关节行程中点，确认后记录 homing offset。"
+            return "照目标动画把整臂摆到各关节行程的中点，按回车确认。"
         if self.phase == "ranges" and self.active_joint:
             joint = self.joints[self.active_joint]
             if joint["status"] == "error":
-                return f"{joint['label']}：{joint['reason']}。请点击“重新标定此关节”。"
-            return (
-                f"请缓慢移动「{joint['label']}」完整经过最小和最大极限，系统会自动记录运动范围；"
-                "完成后点击“记录限位”。"
-            )
+                return f"{joint['label']}：{joint['reason']}。点「重试」重来这个关节。"
+            return f"缓慢转动「{joint['label']}」经过两头的极限，按回车记下。"
         if self.phase == "review":
-            return "请复核六个关节的 offset 和极限值。异常关节可单独重试，确认无误后写入。"
+            return "核对六个关节的范围和回零偏移，有异常的单独重试，没问题就写入。"
         if self.phase == "writing":
             return "正在写入舵机并验证回读，请勿断开电源或串口。"
         if self.phase == "done":
