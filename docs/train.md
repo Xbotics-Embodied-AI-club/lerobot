@@ -24,9 +24,21 @@ lerobot-train --policy.type=act --policy.push_to_hub=false --policy.device=cuda 
   --output_dir=$HOME/outputs/act_pick_cube
 ```
 
-这里的步数和批量就是我们发布的 ACT 模型用的取值。显存不够时把 `--batch_size` 调小。训练时终端会打出步数和 loss：
+这里的步数和批量就是我们发布的 ACT 模型用的取值。显存不够时把 `--batch_size` 调小。
 
-<video controls muted playsinline preload="metadata" src="_static/media/train.mp4"></video>
+训练开始时，终端先打出数据集和模型的规模，然后每隔 `--log_freq` 步打一行。下面是用开源方块数据、批量 8 时开头的输出：
+
+```text
+dataset.num_frames=106085 (106K)
+dataset.num_episodes=300
+num_learnable_params=51597190 (52M)
+Start offline training on a fixed dataset, with effective batch size: 8
+step:10 smpl:80 ep:0 epch:0.00 loss:40.931 grdn:657.864 lr:1.0e-05 updt_s:0.634 data_s:0.577 smp/s:7 mem_gb:3.69 l1_loss:0.878 kld_loss:4.005
+step:20 smpl:160 ep:0 epch:0.00 loss:13.401 grdn:265.703 lr:1.0e-05 updt_s:0.041 data_s:0.001 smp/s:189 mem_gb:3.73 l1_loss:0.849 kld_loss:1.255
+step:30 smpl:240 ep:1 epch:0.00 loss:8.438 grdn:185.244 lr:1.0e-05 updt_s:0.043 data_s:0.002 smp/s:180 mem_gb:3.73 l1_loss:0.831 kld_loss:0.761
+```
+
+`step` 是训练步数，`loss` 是总损失，`updt_s` 和 `data_s` 分别是每步花在更新模型和读数据上的秒数，`mem_gb` 是占用的显存。`data_s` 明显比 `updt_s` 大时，说明读数据拖慢了训练，可以调大 `--num_workers`。
 
 ## 7.3 实例二：SmolVLA 多任务
 
