@@ -71,9 +71,15 @@ lerobot-inference-console \
 
 | 参数 | 含义 |
 | --- | --- |
-| `--pretrained_name_or_path` | Hugging Face 上的模型名，或训练电脑上模型目录的绝对路径，例如 `/home/<用户名>/xbotics/outputs/train/<本次训练>/checkpoints/last/pretrained_model`。该路径由训练电脑读取 |
+| `--pretrained_name_or_path` | Hugging Face 上的模型名，或训练电脑上模型目录的绝对路径（见下） |
 | `--policy_type` | 模型的类型，与训练时一致，如 `act`、`smolvla` |
 | `--task` | 任务描述。接受语言指令的模型（如 SmolVLA）据此决定做什么 |
+
+使用自己训练的模型时，`--pretrained_name_or_path` 填写训练电脑上的绝对路径，该路径由训练电脑读取，例如：
+
+```text
+/home/<用户名>/xbotics/outputs/train/<本次训练>/checkpoints/last/pretrained_model
+```
 
 启动后，推理服务加载模型（首次需要下载，耗时稍长），随后机械臂开始按模型的动作运动。在浏览器中打开 `http://<端侧IP>:8007`，即可看到任务状态、动作队列与推理延迟：点击「停止任务」，机械臂停止执行动作，按钮变为「启动任务」，点击即继续；在「任务」框中修改任务描述后点击「更新」，下一次推理即使用新的描述。按网页终端中的 `Ctrl+C` 结束部署。
 
