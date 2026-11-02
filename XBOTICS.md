@@ -2,25 +2,18 @@
 
 Xbotics 维护的 lerobot 分支。这里是 **0.6 线：基线 `v0.6.1`，分支 `xbotics-0.6`**。
 
-## 两条版本线，按需选
+## 版本
 
-| 线 | 分支 | 标签 | 基线 | 谁在用 |
-|---|---|---|---|---|
-| 0.5 线 | `main` | `xbotics-v0.5.1` | 上游 `v0.5.1` | 工作坊学员机、套件板子现在钉的版本 |
-| 0.6 线 | `xbotics-0.6` | `xbotics-v0.6.1` | 上游 `v0.6.1` | 新项目、星禾套件板子；工作坊之后升到这条线 |
+只维护 0.6 线：分支 `xbotics-0.6`，标签 `xbotics-v0.6.1`，基线上游 `v0.6.1`。0.5 线（`main` / `xbotics-v0.5.1`）停在原处，不再更新。
 
 ```bash
-# 克隆：-b 选线（分支跟着修，标签钉死不动）
-git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.6 线
-git clone -b main        https://github.com/Xbotics-Embodied-AI-club/lerobot.git    # 0.5 线
+git clone -b xbotics-0.6 https://github.com/Xbotics-Embodied-AI-club/lerobot.git
 
-# 当依赖装（uv 项目的 pyproject.toml 里写；要复现就钉标签）
+# 当依赖装（uv 项目的 pyproject.toml 里写；要复现就钉标签或提交号）
 #   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1" }
-#   lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.5.1" }
-pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-v0.6.1"
 ```
 
-标签 `xbotics-v0.6.1` / `xbotics-v0.5.1` 指向各条线当前推荐的版本，随修随前移（目前还没有外部使用者，不另起 `.postN`）；要钉死某一版就钉提交号。
+标签 `xbotics-v0.6.1` 指向当前推荐的版本，随修随前移（目前还没有外部使用者，不另起 `.postN`）；要钉死某一版就钉提交号。
 
 功能是**一起装的**，没有「挑几个」这回事 —— 下面几项在本分支上一律可用。
 
@@ -41,12 +34,34 @@ pip install "lerobot[all] @ git+https://github.com/Xbotics-Embodied-AI-club/lero
 | `feat(board)` | **端侧板按接口位置固定设备名**（udev 规则，RK3566）：主从两条臂的串口、顶视与腕部两路相机都有固定名字，见下「端侧板：按接口位置固定设备名」。 |
 | `feat(board)` | **端侧板配网页**（RK3566）：板子一直开着热点，连上后在浏览器里给板子连 Wi-Fi、设网线，结果实时显示，见下「端侧板：配网页」。 |
 | `fix(async_inference)` | **policy_server 两处防僵死**：推理成功后才记「这一步已推理」，失败时把「上次推理过的观测」还原；机械臂不动、观测全被相似度检查滤掉时，5 秒没有观测入队就强制放最新一帧（`--similarity_stall_timeout`）。见下「网页工具」。 |
+| `feat(train)` | **训练默认写 TensorBoard**（`<output_dir>/tensorboard`），训练中就能看曲线。见下「训练看 TensorBoard」。 |
+| `feat(xbotics)` | **板子上要维护的全部收进包里**：一条命令装好一块新板，`xbotics-config update` 升级 LeRobot 并把系统设置、网页、服务一起升级。见下「端侧板：安装与升级」。 |
+| `feat(xbotics)` | **网络设置页加「连服务器」**：SSH 隧道把服务器上的推理服务、TensorBoard 映射到板子的 0.0.0.0，账号密码或私钥登录，断线自动重连。见下「端侧板：连服务器」。 |
 | `feat(xbotics)` | **三个网页工具**：硬件检测 `lerobot-hardware-check`（8005）、SO101 网页标定 `lerobot-calibrate-web`（8006）、带 Web 控制台与 RTC 的推理客户端 `lerobot-inference-console`（8007），装 `lerobot[xbotics_tools]`。见下「网页工具」。 |
 
 0.5 线上另有四个 commit 在 0.6 线**不再需要**（上游已修，修法各异）：GR00T N1.5 配置去 `@dataclass`
 （上游换成了 N1.7）、`add_envs_task` 绕开 gymnasium 包装器（上游删了这个函数，评测直接 `env.call`）、
 diffusers 上界放到 0.41（上游 `diffusers-dep` 是 `>=0.38,<0.40`，0.38 起那个 import 期的 bug 已修）、
 PEFT 续训适配器被冻与重复包装（上游两处都修了）。
+
+## 训练看 TensorBoard（默认开）
+
+`lerobot-train` 把训练曲线写进 `<output_dir>/tensorboard`，训练中另开一个终端就能看，不用账号、不用联网：
+
+```bash
+tensorboard --logdir outputs/train/<这次训练>/tensorboard          # 浏览器打开 http://localhost:6006
+tensorboard --logdir outputs/train --bind_all                     # 同时看所有训练、让局域网里别的电脑也能打开
+```
+
+- 记的量与 W&B 那一路同名：`train/loss`、`train/grad_norm`、`train/lr`、`train/update_s`、`train/samples_per_s`、`train/gpu_mem_gb`，
+  策略自己的子损失（ACT 的 `l1_loss` / `kld_loss` 等），留出集的 `eval/eval_loss`，仿真评测的 `eval/pc_success`、`eval/avg_sum_reward` 及按场景分组的同名指标；训练配置记在 TEXT 页。
+- 每 `log_freq` 步写一次并立即落盘，开着的 TensorBoard 几秒内出新点。
+- 从检查点续训（`--resume=true`）时，中断前写过检查点之后的那段点作废，曲线从续训的那一步接上。
+- 关掉：`--tensorboard.enable=false`；换目录：`--tensorboard.log_dir=<目录>`。与 `--wandb.enable=true` 可以同时开。
+- 训练在服务器上、想在板子那边的电脑上看：用板子网络设置页的「连服务器」把 6006 映射过来，见下「端侧板：连服务器」。
+
+实测（server，ACT，`so101_sim/pick_place_cube_40mm`，400 步，每 20 步记一次，第 200、400 步各做一次 2 局仿真评测）：事件文件里 13 条训练曲线、14 条评测曲线，
+`tensorboard` 读回的步数与日志一致。做法照上游 PR #154（没合并）：torch 自带的 `SummaryWriter`；`tensorboard` 已在 `training` 组里。
 
 ## 远程推理：观测压 JPEG、后台发送（默认开）
 
@@ -241,10 +256,46 @@ lerobot-eval --env.type=so101_sim --env.task=SO101PickPlaceCube40-v1 \
 
 BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robotics/rdk_LeRobot_tools)，不在本 fork 内。
 
+## 端侧板：安装与升级（RK3566）
+
+板子上要维护的东西全部随 LeRobot 包发布（[`src/lerobot/xbotics/board/`](src/lerobot/xbotics/board/)），升级 LeRobot 就是升级全部：
+
+| 装什么 | 在包里哪 |
+|---|---|
+| 开机不进桌面、CPU 与内存锁最高频、相机不自己降帧 | `system/`、`udev/` |
+| 机械臂与相机的固定设备名 | `udev/99-xbotics-rk3566.rules` |
+| 网络设置页（8001，热点配网 + 连服务器） | `provision/` |
+| 网页终端（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，code-server 版本钉在安装器里）的配置与服务 | `jupyter/`、`vscode/`、`install.py` |
+| 网页硬件检测（8005）、网页标定（8006）的服务，开关命令 `xbotics-config` | `config/` |
+| 板子的 LeRobot 环境 `/root/xbotics` 的 pyproject（钉 torch 2.9.1、rerun 0.26.2、不装 torchcodec） | `board_env/` |
+
+**新板子**（厂家 Ubuntu 22.04 镜像，root 登录后敲一行；照旧手册手工装过的板子也一样）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/src/lerobot/xbotics/board/bootstrap.sh | bash
+```
+
+它装 uv、建 LeRobot 环境，再由环境里的 LeRobot 跑 `python -m lerobot.xbotics.board install` 把上表全部装好；第一次装会打开 8002–8006 五个网页服务。
+
+**升级全部**：
+
+```bash
+xbotics-config update
+```
+
+取标签现在指向的 LeRobot，再把上表重装一遍，只改有变化的部分：
+
+- 保持 `xbotics-config` 里的服务开关；已经设过的 JupyterLab、VS Code 密码不覆盖；学员自己 `uv add` 的包保留。
+- 在跑的服务有改动才重启；JupyterLab、硬件检测、网页标定在 LeRobot 换了版本时重启，没换就不动，不会无故打断正在跑的 notebook。
+- 升级放在单独的 systemd 单元里跑、重启延后 3 秒：从网页终端或 VS Code 终端里敲也不会把升级本身掐断，页面断开一下刷新即可。
+
+实测（2026-11-02，ZTL A566，照 10-27 手册手工装过的板子）：一键安装约 1 分钟（LeRobot 只换一个包），六个网页服务照常在跑、
+页面换成新版；之后 `xbotics-config update` 在 LeRobot 换了提交时重启那三项、没换时什么都不重启，各约 20 秒。
+
 ## 端侧板：按接口位置固定设备名（RK3566）
 
 板子上的 `/dev/videoN` 是按枚举顺序分的，换个口、重启一次都可能变。
-[`xbotics/udev/99-xbotics-rk3566.rules`](xbotics/udev/99-xbotics-rk3566.rules) 按**插在板子的哪个口**起固定名字，
+[`99-xbotics-rk3566.rules`](src/lerobot/xbotics/board/udev/99-xbotics-rk3566.rules) 按**插在板子的哪个口**起固定名字，
 不按序号，也不按相机型号或序列号 —— 同型号的相机插哪个口就叫哪个名字，换相机不用改规则：
 
 | 固定名字 | 是什么 | 按什么匹配 |
@@ -257,18 +308,9 @@ BPU 上板推理用地瓜官方 [`rdk_LeRobot_tools`](https://github.com/D-Robot
 认的是**口**，不是设备：主臂插到从臂的串口座上，它就叫 `follower`；顶视相机插到腕部的 USB 口上，它就叫 `wrist`。
 设备拔掉，对应的名字随之消失。只适用于 ZTL A566 这一款板子。
 
-装（板子上，root）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/udev/99-xbotics-rk3566.rules \
-  -o /etc/udev/rules.d/99-xbotics-rk3566.rules
-udevadm control --reload
-udevadm trigger --action=add --subsystem-match=tty --subsystem-match=video4linux
-ls -l /dev/xbotics/
-```
-
-最后一行列出当前插着的设备，四样都插上时是 `follower -> ../ttyS3`、`leader -> ../ttyS1`、`top`、`wrist` 各指向一个 `videoN`。之后命令里直接写这些名字：
+规则随 LeRobot 包发布，由上面「安装与升级」一并装好。之后命令里直接写这些名字：
 `--robot.port=/dev/xbotics/follower`、`--teleop.port=/dev/xbotics/leader`，相机 `index_or_path: /dev/xbotics/top`、`/dev/xbotics/wrist`。
+`ls -l /dev/xbotics/` 列出当前插着的设备，四样都插上时是 `follower -> ../ttyS3`、`leader -> ../ttyS1`、`top`、`wrist` 各指向一个 `videoN`。
 
 实测（2026-10-19，ZTL A566）：经固定名字，两个板载串口上的 6 个 STS3215 在 1 Mbps 下都全部读到（同步读位置 300 次 0 失败、中位 1.3 ms）；
 两路 USB 相机各出 640×480、约 29 fps；相机拔掉后它的名字随之消失。
@@ -282,7 +324,7 @@ udevadm info -a -n /dev/ttyS3 | grep -m1 'KERNELS==".*\.serial"'           # 板
 
 ## 端侧板：配网页（RK3566）
 
-[`xbotics/provision/`](xbotics/provision/) 让板子一直开着一个热点 `Xbotics-XXXX`（后四位取自板子 Wi-Fi 网卡的地址，每块板不同），
+网络设置页让板子一直开着一个热点 `Xbotics-XXXX`（后四位取自板子 Wi-Fi 网卡的地址，每块板不同），
 电脑或手机连上它，系统会弹出配网页（没弹就在浏览器里打开 `http://10.42.0.1`）。页面上能给板子连 Wi-Fi、设网线（自动获取或固定 IP），
 网线、Wi-Fi、热点三样的状态和能不能上外网每两秒刷新一次。热点不设密码、不通外网，只给这个页面用；
 同一个页面在局域网里打开 `http://<板子IP>:8001` 也能用。
@@ -296,19 +338,7 @@ udevadm info -a -n /dev/ttyS3 | grep -m1 'KERNELS==".*\.serial"'           # 板
   8004 浏览器版 VS Code（code-server）；页面上「从你自己的网络打开」一栏按这四个号列出地址。
   80 端口也开着同一个页面：连上热点的设备检测联网只打 80，弹页靠它，`http://10.42.0.1` 不写端口也能开。
 
-装（板子上，root）：
-
-```bash
-apt-get install -y iw
-base=https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/provision
-mkdir -p /opt/xbotics/provision /etc/NetworkManager/dnsmasq-shared.d
-curl -fsSL $base/xbotics_provision.py -o /opt/xbotics/provision/xbotics_provision.py
-curl -fsSL $base/index.html -o /opt/xbotics/provision/index.html
-curl -fsSL $base/xbotics-captive.conf -o /etc/NetworkManager/dnsmasq-shared.d/xbotics-captive.conf
-curl -fsSL $base/xbotics-provision.service -o /etc/systemd/system/xbotics-provision.service
-systemctl daemon-reload
-systemctl enable --now xbotics-provision
-```
+代码在 [`src/lerobot/xbotics/board/provision/`](src/lerobot/xbotics/board/provision/)，由上面「安装与升级」一并装好（只用系统 Python 与 `nmcli`，不进 LeRobot 环境）。
 
 NetworkManager 1.36 的两个坑，代码里已绕开：
 
@@ -320,6 +350,29 @@ NetworkManager 1.36 的两个坑，代码里已绕开：
 带 Android、Apple、Windows 联网检测地址的请求都跳到配网页；重启后热点、页面、Wi-Fi 与网线设置都自动恢复。
 2026-10-21 改成 80 与 8001 同时开：两个端口都回页面，联网检测请求在 80 上照旧跳到配网页。
 
+## 端侧板：连服务器（RK3566）
+
+推理服务、TensorBoard 跑在服务器上，板子去连它们。网络设置页（`http://<板子IP>:8001`）的「连服务器」一栏填服务器地址、SSH 端口、账号，
+登录方式二选一：**账号密码**，或**私钥**（整段粘贴或选文件，可带口令）。点「保存并连接」，板子用 SSH 隧道把服务器上的端口映射到自己的 **0.0.0.0**：
+
+| 默认映射 | 板子上 | 服务器上 |
+|---|---|---|
+| 推理服务（`policy_server`） | `0.0.0.0:8080` | `127.0.0.1:8080` |
+| TensorBoard | `0.0.0.0:6006` | `127.0.0.1:6006` |
+
+板子上的程序连 `127.0.0.1:8080`（`robot_client`、推理控制台的 `--server_host=127.0.0.1` 照旧），同一网络里的电脑打开 `http://<板子IP>:6006` 看训练曲线。
+映射可以增删，服务器端口写 `地址:端口` 时转到服务器能到的另一台机器。页面每条映射标出「通 / 服务器上这个端口没有服务」，网页那几路给「打开」链接。
+
+- 隧道就是 OpenSSH 客户端的本地转发 `ssh -N -L 0.0.0.0:<板子端口>:<地址>:<端口>`，由 systemd 服务 `xbotics-tunnel` 拉起：断了 5 秒后重连，
+  `ServerAliveInterval` 让断网在 30 秒内被发现；设好以后开机自动连，「断开」按钮同时取消开机自连。
+- 密码与私钥口令经 OpenSSH 自带的 `SSH_ASKPASS` 交给 ssh（OpenSSH 8.4 起），每次重连都能自己登录，不用 sshpass。设置存在 `/etc/xbotics/`，只有 root 能读。
+- ssh 的英文报错译成白话显示在页面上：登录被拒、地址找不到、端口不对、板子端口被占、服务器不许转发（`AllowTcpForwarding`）等。
+- 服务器那边只要开着 SSH、允许 TCP 转发（OpenSSH 默认允许），推理服务与 TensorBoard 照默认只听 127.0.0.1 就行，不用对外开端口。
+
+实测（2026-11-02，ZTL A566 ↔ 同网段的一台 aarch64 机器当服务器）：网页上填账号密码、点保存，约 3 秒连上，`0.0.0.0:8080`、`0.0.0.0:6006` 由 ssh 在听，
+别的电脑经 `http://<板子IP>:6006` 打开了服务器上只听本机的 TensorBoard；换成带口令的 ed25519 私钥同样连上（服务器日志 `Accepted publickey`）；
+杀掉 ssh 进程后 6.5 秒自己连回；输错密码时页面显示「登录被拒：账号、密码或私钥不对」并在后台重试。
+
 ## 网页工具：硬件检测、标定、推理控制台
 
 板子不开桌面，学员手里只有浏览器。下面三个工具在板子（或任何接着机械臂的机器）上跑，
@@ -328,9 +381,7 @@ NetworkManager 1.36 的两个坑，代码里已绕开：
 推理控制台要给服务端地址和模型，总是按需敲命令起。移植自 gitee [`zhuzhuangtian/lerobot-v0.5.1-custom`](https://gitee.com/zhuzhuangtian/lerobot-v0.5.1-custom/tree/master/lerobot_tools)
 的 `lerobot_tools`，按本线改过，改了什么写在各自的模块说明里。
 
-```bash
-pip install "lerobot[feetech,async,xbotics_tools] @ git+https://github.com/Xbotics-Embodied-AI-club/lerobot.git@xbotics-0.6"
-```
+套件板子上由「端侧板：安装与升级」装好；别的机器上把 `xbotics_tools` 组加进 LeRobot 依赖（`lerobot[feetech,async,xbotics_tools]`）。
 
 | 命令 | 端口 | 做什么 |
 |---|---|---|
@@ -350,17 +401,7 @@ xbotics-config enable hardware-check calibrate
 xbotics-config disable calibrate          # 名字：terminal jupyter vscode hardware-check calibrate，all = 全部
 ```
 
-装（板子上，root；8005、8006 两个服务用的是安装手册里那个 LeRobot 环境 `/root/xbotics/.venv`，要先给它加上 `xbotics_tools`）：
-
-```bash
-apt-get install -y whiptail
-base=https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/xbotics/config
-curl -fsSL $base/xbotics-config -o /usr/local/bin/xbotics-config && chmod +x /usr/local/bin/xbotics-config
-curl -fsSL $base/xbotics-hardware-check.service -o /etc/systemd/system/xbotics-hardware-check.service
-curl -fsSL $base/xbotics-calibrate-web.service -o /etc/systemd/system/xbotics-calibrate-web.service
-systemctl daemon-reload
-xbotics-config enable hardware-check calibrate
-```
+`xbotics-config` 与两个服务文件由「端侧板：安装与升级」装好，`xbotics-config update` 升级全部。
 
 - 在网页终端里关网页终端会把自己这个页面断开，菜单里会先问一次。
 - 两个服务空闲时各占约 290 MB 内存（LeRobot 连带导入 torch），都开着板子还剩约 3 GB 可用（RK3566 4 GB 实测）。
