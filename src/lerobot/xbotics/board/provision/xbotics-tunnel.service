@@ -8,6 +8,8 @@ StartLimitIntervalSec=0
 ExecStart=/usr/bin/python3 /opt/xbotics/provision/xbotics_tunnel.py
 Restart=always
 RestartSec=5
+# 账号、密码或私钥不对（xbotics_tunnel.py 退出码 3）不重试，免得服务器把账号锁掉
+RestartPreventExitStatus=3
 
 [Install]
 WantedBy=multi-user.target

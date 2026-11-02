@@ -15,6 +15,7 @@ TensorBoard 等端口映射到自己的 0.0.0.0，隧道本身见同目录的 xb
 
 import ipaddress
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -333,11 +334,12 @@ def systemctl(*args: str) -> tuple[int, str]:
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
-# ssh 的英文报错 → 给人看的话；按顺序取第一个对上的
+# ssh 的英文报错 → 给人看的话。同一次失败会打出好几行（口令错了之后还跟着一行 Permission denied），
+# 所以按这里的先后取：越具体的越靠前
 TUNNEL_ERRORS = (
-    ("Permission denied", "登录被拒：账号、密码或私钥不对"),
-    ("incorrect passphrase", "私钥的口令不对"),
+    ("incorrect passphrase", "私钥的口令不对，改好后点「保存并连接」"),
     ("invalid format", "私钥格式不对：要粘贴整段私钥，从 -----BEGIN 那一行到 -----END 那一行"),
+    ("Permission denied", "登录被拒：账号、密码或私钥不对，改好后点「保存并连接」"),
     ("Could not resolve hostname", "找不到这个服务器地址，检查一下拼写"),
     ("Connection refused", "服务器拒绝连接：SSH 端口不对，或服务器没开 SSH"),
     ("Connection timed out", "连不上服务器：地址不对，或板子的网络到不了它"),
@@ -350,6 +352,10 @@ TUNNEL_ERRORS = (
         "服务器的指纹变了（重装过系统？）：再点一次「保存并连接」会重新认它",
     ),
     (
+        "Host key verification failed",
+        "服务器的指纹变了（重装过系统？）：再点一次「保存并连接」会重新认它",
+    ),
+    (
         "administratively prohibited",
         "服务器不允许端口转发：在服务器的 sshd_config 里设 AllowTcpForwarding yes",
     ),
@@ -357,7 +363,7 @@ TUNNEL_ERRORS = (
 
 
 def tunnel_error() -> str:
-    """这一次启动以来 ssh 报的最后一个错误，翻成白话；没错误就是空串。"""
+    """最近一两次启动里 ssh 报的错误，翻成白话；没错误就是空串。"""
     proc = subprocess.run(
         ["journalctl", "-u", tunnel.UNIT, "-n", "40", "-o", "cat", "--no-pager"],
         capture_output=True, text=True, timeout=10, check=False,
@@ -366,27 +372,28 @@ def tunnel_error() -> str:
     starts = [i for i, line in enumerate(lines) if line.startswith("隧道：")]
     # 只看最近两次启动的输出：上一次失败的原因，与这一次的（重连中）
     recent = lines[starts[-2] if len(starts) > 1 else 0 :]
-    for line in reversed(recent):
-        # 「channel N: open failed」是某一路转发在服务器那头没服务，不是隧道本身的错，页面在映射清单里单独标
-        if line.startswith("channel "):
-            continue
-        for needle, text in TUNNEL_ERRORS:
-            if needle in line:
-                return text
+    # 「channel N: open failed」是某一路转发在服务器那头没服务，不是隧道本身的错，页面在映射清单里单独标
+    recent = [line for line in recent if not line.startswith("channel ")]
+    for needle, text in TUNNEL_ERRORS:
+        if any(needle in line for line in recent):
+            return text
     return ""
 
 
 def probe_forward(port: int) -> str:
-    """经隧道连一次板子上的这个端口：ok = 服务器那头有服务在答；closed = 连上就被断开（服务器上这个端口没服务）；
-    down = 板子上没在监听（隧道没起来）。"""
+    """经隧道连一次板子上的这个端口，什么都不发。
+
+    ok = 服务器那头有服务（连接一直开着，等我们先说话；或者它先发了数据）；closed = 连上就被断开
+    （ssh 在服务器那头连不上这个端口，就把板子这头的连接关掉）；down = 板子上没在监听（隧道没起来）。
+    不发数据：gRPC 这类协议收到不认得的数据会直接断开，发了就和「没服务」分不开了。
+    """
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
-            s.settimeout(3)
-            s.sendall(b"GET / HTTP/1.0\r\n\r\n")
+            s.settimeout(2)
             try:
                 return "ok" if s.recv(1) else "closed"
             except TimeoutError:
-                return "ok"  # 连着、没回话也没断：当作有服务（有的协议要客户端先说完整的话）
+                return "ok"
             except OSError:
                 return "closed"
     except OSError:
@@ -483,6 +490,14 @@ def parse_tunnel(body: dict, old: dict) -> dict:
     return cfg
 
 
+def write_private(path: Path, text: str) -> None:
+    """只有 root 能读的文件：一创建就是 0600，中间没有别人能读的窗口。"""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
+
+
 def save_tunnel(body: dict) -> None:
     old = tunnel.load_config()
     try:
@@ -494,12 +509,10 @@ def save_tunnel(body: dict) -> None:
     tunnel.CONF_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = cfg.pop("_key", None)
     if key:
-        tunnel.KEY_FILE.write_text(key)
-        tunnel.KEY_FILE.chmod(0o600)
-    if old.get("host") != cfg["host"] or old.get("port") != cfg["port"]:
-        tunnel.KNOWN_HOSTS.unlink(missing_ok=True)  # 换了服务器：重新认它的指纹
-    tunnel.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
-    tunnel.CONFIG.chmod(0o600)
+        write_private(tunnel.KEY_FILE, key)
+    # 每次保存都重新认服务器的指纹：换了服务器、服务器重装过系统，点一次「保存并连接」就能连上
+    tunnel.KNOWN_HOSTS.unlink(missing_ok=True)
+    write_private(tunnel.CONFIG, json.dumps(cfg, ensure_ascii=False, indent=2))
     systemctl("enable", tunnel.UNIT)
     code, out = systemctl("restart", tunnel.UNIT)
     if code != 0:

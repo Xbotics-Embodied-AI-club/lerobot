@@ -7,7 +7,7 @@
 做法照上游 PR #154（没合并）：用 torch 自带的 ``SummaryWriter``。另两处：
 
 - 每个记录窗口写完就 flush：``SummaryWriter`` 默认两分钟才落一次盘，开着的 TensorBoard 要等那么久才出新点。
-- 续训时带 ``purge_step``：中断前写过检查点之后的那段点作废，曲线从续训的那一步接上，不出现重叠的尾巴。
+- 续训时带 ``purge_step``：中断前写在检查点之后的那段点作废（检查点那一步本身保留），曲线从续训的下一步接上，不出现重叠的尾巴。
 """
 
 import json
@@ -41,7 +41,9 @@ class TensorBoardLogger:
         from torch.utils.tensorboard import SummaryWriter
 
         self.log_dir = resolve_log_dir(cfg)
-        self._writer = SummaryWriter(log_dir=str(self.log_dir), purge_step=start_step or None)
+        self._writer = SummaryWriter(
+            log_dir=str(self.log_dir), purge_step=start_step + 1 if start_step else None
+        )
         if not start_step:
             config = json.dumps(cfg.to_dict(), indent=2, ensure_ascii=False, default=str)
             self._writer.add_text("config", f"```json\n{config}\n```", 0)

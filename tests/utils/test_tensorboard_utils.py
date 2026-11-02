@@ -57,14 +57,14 @@ def test_resume_drops_points_past_the_checkpoint(tmp_path):
         first.log_dict({"loss": 1.0}, step)
     first.close()
 
-    resumed = TensorBoardLogger(make_cfg(tmp_path), start_step=5)
-    for step in range(5, 8):
+    resumed = TensorBoardLogger(make_cfg(tmp_path), start_step=5)  # 续训从第 6 步开始记
+    for step in range(6, 8):
         resumed.log_dict({"loss": 2.0}, step)
     resumed.close()
 
     loss = read_scalars(tmp_path / "tensorboard")["train/loss"]
-    assert [s for s, _ in loss] == [1, 2, 3, 4, 5, 6, 7]
-    assert [v for s, v in loss if s >= 5] == [2.0, 2.0, 2.0]
+    assert [s for s, _ in loss] == [1, 2, 3, 4, 5, 6, 7]  # 检查点那一步（5）留着，8–10 作废
+    assert [v for _, v in loss] == [1.0] * 5 + [2.0, 2.0]
 
 
 def test_mode_must_be_train_or_eval(tmp_path):

@@ -264,6 +264,7 @@ xbotics_tools = [
     "msgpack>=1.0.0,<2.0.0",
     "websockets>=13.0,<18.0",
     "pyyaml>=6.0,<7.0",
+    "tomlkit>=0.13.0,<1.0.0",  # 板子升级时逐键改环境的 pyproject（lerobot.xbotics.board）
 ]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 

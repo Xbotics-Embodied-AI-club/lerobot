@@ -4,6 +4,9 @@
 ``xbotics-tunnel`` 拉起，断了 5 秒后自己重连（``ServerAliveInterval`` 让断网在 30 秒内被发现）。
 监听 0.0.0.0：板子上的程序连 ``127.0.0.1:<端口>``，同一网络里的电脑连 ``<板子IP>:<端口>``，走的是同一条隧道。
 
+账号、密码或私钥不对时不再重试（退出码 3，服务里 RestartPreventExitStatus=3）：一直用错的密码去试，
+服务器上的 fail2ban 之类会把这个账号锁掉。改好后在网络设置页再点「保存并连接」。
+
 登录两种：账号密码，或私钥（可带口令）。密码与口令经 OpenSSH 自带的 ``SSH_ASKPASS`` 交给 ssh
 （``SSH_ASKPASS_REQUIRE=force``，OpenSSH 8.4 起），每次重连都能自己登录，不用 sshpass。
 设置由网络设置页写进 ``/etc/xbotics/tunnel.json``（只有 root 能读），私钥存成 ``/etc/xbotics/tunnel_key``。
@@ -14,6 +17,7 @@
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,6 +26,13 @@ CONFIG = CONF_DIR / "tunnel.json"
 KEY_FILE = CONF_DIR / "tunnel_key"
 KNOWN_HOSTS = CONF_DIR / "tunnel_known_hosts"
 UNIT = "xbotics-tunnel"
+AUTH_FAILED = 3  # 与 xbotics-tunnel.service 的 RestartPreventExitStatus 对应
+AUTH_ERRORS = (
+    "Permission denied",
+    "incorrect passphrase",
+    "invalid format",
+    "Too many authentication failures",
+)
 
 # 默认映射两路：服务器上的推理服务（policy_server 默认 8080）与 TensorBoard（默认 6006）。
 # web：是不是网页，网络设置页只给网页那几路出「打开」链接（推理服务是 gRPC，浏览器打不开）
@@ -89,7 +100,15 @@ def main() -> None:
         "隧道：" + " ".join(a for a in cmd if a.startswith("0.0.0.0:")) + f" 经 {cfg['user']}@{cfg['host']}",
         flush=True,
     )
-    os.execvpe("ssh", cmd, env)
+    # 不用 exec：要看 ssh 的报错决定退出码。报错原样转到标准错误，进 journal 给网络设置页翻译
+    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    auth_failed = False
+    for line in proc.stderr:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        auth_failed |= any(e in line for e in AUTH_ERRORS)
+    code = proc.wait()
+    sys.exit(AUTH_FAILED if auth_failed else code or 1)
 
 
 if __name__ == "__main__":

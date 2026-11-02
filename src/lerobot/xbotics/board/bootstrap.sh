@@ -16,10 +16,13 @@ if ! command -v uv >/dev/null; then
 fi
 mkdir -p /root/xbotics && cd /root/xbotics
 [[ -f pyproject.toml ]] || curl -fsSL "$RAW/board_env/pyproject.toml" -o pyproject.toml
-if [[ -n "${XBOTICS_REF:-}" ]]; then
-  case "$REF" in xbotics-v*) kind=tag ;; *) kind=branch ;; esac
-  sed -i -E "s#^lerobot = \{ git = \"([^\"]+)\", (tag|branch|rev) = \"[^\"]*\" \}#lerobot = { git = \"\1\", $kind = \"$REF\" }#" pyproject.toml
-fi
+# 把 pyproject.toml 里 LeRobot 的源指到 $1：标签 xbotics-v* 写 tag，提交号写 rev，其余当分支
+set_ref() {
+  local kind
+  if [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; then kind=rev; elif [[ "$1" == xbotics-v* ]]; then kind=tag; else kind=branch; fi
+  sed -i -E "s#^lerobot = \{ git = \"([^\"]+)\", (tag|branch|rev) = \"[^\"]*\" \}#lerobot = { git = \"\1\", $kind = \"$1\" }#" pyproject.toml
+}
+[[ -n "${XBOTICS_REF:-}" ]] && set_ref "$REF"
 echo "· 建 LeRobot 环境（第一次要下载约 1.5 GB，几分钟）"
 uv lock --upgrade-package lerobot
 uv sync

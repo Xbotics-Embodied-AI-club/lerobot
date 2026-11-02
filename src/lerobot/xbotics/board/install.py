@@ -6,7 +6,7 @@
 - 网络设置页（8001，热点配网 + 连服务器的 SSH 隧道）
 - 网页终端 ttyd（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，版本钉在 ``CODE_SERVER_VERSION``）
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
-- 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：按 ``board_env/pyproject.toml`` 重写，自己用 ``uv add`` 加的包与源保留
+- 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：只改 ``board_env/pyproject.toml`` 管的几项，其余原样保留
 
 第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变。
 在跑的服务有改动就重启；跑 LeRobot 代码的那几个（JupyterLab、硬件检测、网页标定）在 LeRobot 换了版本时重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
@@ -100,11 +100,21 @@ def toml_inline(table: dict) -> str:
     return "{ " + ", ".join(f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in table.items()) + " }"
 
 
-def render_env_pyproject(template: str, old: str | None) -> str:
-    """按模板重写板子环境的 pyproject；旧文件里模板没有的依赖与 [tool.uv.sources] 条目原样保留，LeRobot 的源也沿用旧的
-    （bootstrap.sh 用 XBOTICS_REF 把它指到某个分支时，升级不把它改回标签）。"""
-    if old is None:
-        return template
+REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?(.*)$", re.S)
+
+
+def merge_extras(template_req: str, old_req: str) -> str:
+    """模板的依赖写法为准，学员自己给它加的可选组（如 lerobot[...] 里多写的）并进来。"""
+    t, o = REQ.match(template_req), REQ.match(old_req)
+    if not (t and o and o.group(2)):
+        return template_req
+    extras = [e.strip() for e in (t.group(2) or "").split(",") if e.strip()]
+    extras += [e.strip() for e in o.group(2).split(",") if e.strip() and e.strip() not in extras]
+    return f"{t.group(1)}[{','.join(extras)}]{t.group(3)}"
+
+
+def render_env_pyproject_plain(template: str, old: str) -> str:
+    """没有 tomlkit 时（还没装 xbotics_tools 组的老环境，只在第一次升级时走这里）：按模板整份重写，只带上旧的依赖与源。"""
     t, o = tomllib.loads(template), tomllib.loads(old)
     deps = t["project"]["dependencies"]
     names = {req_name(d) for d in deps}
@@ -116,19 +126,52 @@ def render_env_pyproject(template: str, old: str | None) -> str:
         count=1,
         flags=re.M,
     )
-    old_sources = o.get("tool", {}).get("uv", {}).get("sources", {})
-    if "lerobot" in old_sources:
-        text = re.sub(
-            r"^lerobot = \{.*\}$",
-            lambda _: "lerobot = " + toml_inline(old_sources["lerobot"]),
-            text,
-            count=1,
-            flags=re.M,
-        )
-    for name, src in old_sources.items():
+    for name, src in o.get("tool", {}).get("uv", {}).get("sources", {}).items():
         if name != "lerobot":
-            text += f"{name} = {toml_inline(src)}\n"
+            text += f"{json.dumps(name)} = {toml_inline(src)}\n"
     return text
+
+
+def render_env_pyproject(template: str, old: str | None) -> str:
+    """板子环境的 pyproject 升级：只改维护版管的几项，其余（学员 uv add 的包、源、索引、依赖组、注释）原样保留。
+
+    管的几项：Python 版本、模板里的依赖（学员给它们加的可选组保留）、override-dependencies、LeRobot 的源。
+    LeRobot 的源指到分支或提交（bootstrap.sh 用 XBOTICS_REF 装的测试板）时不动；是标签就换成模板的，
+    以后发新标签，升级就会换过去。上一版模板管、这一版删掉的依赖记在 [tool.xbotics]，升级时一并删掉。
+    """
+    if old is None:
+        return template
+    try:
+        import tomlkit
+    except ImportError:
+        return render_env_pyproject_plain(template, old)
+    t = tomllib.loads(template)
+    doc = tomlkit.parse(old)
+    template_deps = t["project"]["dependencies"]
+    managed = {req_name(d) for d in template_deps}
+    previously_managed = set(doc.get("tool", {}).get("xbotics", {}).get("managed-dependencies", []))
+
+    project = doc.setdefault("project", tomlkit.table())
+    old_deps = [str(d) for d in project.get("dependencies", [])]
+    by_name = {req_name(d): d for d in old_deps}
+    deps = [merge_extras(d, by_name[req_name(d)]) if req_name(d) in by_name else d for d in template_deps]
+    deps += [d for d in old_deps if req_name(d) not in managed | previously_managed]
+    project["dependencies"] = deps
+    project["requires-python"] = t["project"]["requires-python"]
+
+    tool = doc.setdefault("tool", tomlkit.table())
+    uv = tool.setdefault("uv", tomlkit.table())
+    uv["package"] = t["tool"]["uv"]["package"]
+    uv["override-dependencies"] = t["tool"]["uv"]["override-dependencies"]
+    sources = uv.setdefault("sources", tomlkit.table())
+    old_src = sources.get("lerobot") or {}
+    if not ("branch" in old_src or "rev" in old_src):
+        src = tomlkit.inline_table()
+        src.update(t["tool"]["uv"]["sources"]["lerobot"])
+        sources["lerobot"] = src
+    tool.setdefault("xbotics", tomlkit.table())["managed-dependencies"] = sorted(managed)
+    new = tomlkit.dumps(doc)
+    return old if tomllib.loads(new) == tomllib.loads(old) else new
 
 
 def sync_env() -> None:
@@ -265,14 +308,26 @@ def is_active(unit: str) -> bool:
     return systemctl("is-active", unit).stdout.strip() == "active"
 
 
+def plan_restarts(running: set[str], changed_units: set[str], lerobot_changed: bool) -> list[str]:
+    """在跑的服务里，哪些要重启：文件改了的；跑 LeRobot 代码的那几个在 LeRobot 换了版本时。"""
+    units = ("xbotics-maxfreq", "xbotics-provision", *WEB_SERVICES, "xbotics-tunnel")
+    return [
+        u
+        for u in units
+        if u in running and (u in changed_units or (lerobot_changed and u in LEROBOT_SERVICES))
+    ]
+
+
 def install() -> None:
     if os.geteuid() != 0:
         raise SystemExit(
             "要用 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
         )
-    first = not MARKER.exists()
+    # 照旧手册手工装过的板子没有 MARKER，但已经有这些服务文件：按升级处理，不去动学员关掉的服务
+    legacy = any((SYSTEMD / f"{u}.service").exists() for u in ("xbotics-provision", "xbotics-hardware-check"))
+    first = not MARKER.exists() and not legacy
     version = lerobot_version()
-    lerobot_changed = first or MARKER.read_text().strip() != version
+    lerobot_changed = not MARKER.exists() or MARKER.read_text().strip() != version
     say("第一次安装" if first else "升级：保持现有的服务开关，有改动的服务才重启")
     apt_install()
     sync_env()
@@ -298,15 +353,9 @@ def install() -> None:
         run("systemctl", "set-default", "multi-user.target")
         say("开机不进桌面（重启后生效）")
 
-    # 先记下哪些在跑：在跑的有改动（或跑的是 LeRobot 代码）就重启；照旧手册手工装过的板子没有 MARKER、
-    # 按第一次装处理，它上面早就在跑的服务同样要重启才用上新版
     always_on = ("xbotics-maxfreq", "xbotics-provision")
     running = {u for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel") if is_active(u)}
-    to_restart = [
-        u
-        for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel")
-        if u in running and (u in changed_units or (lerobot_changed and u in LEROBOT_SERVICES))
-    ]
+    to_restart = plan_restarts(running, changed_units, lerobot_changed)
     for unit in always_on:
         run("systemctl", "enable", "--now", unit, capture_output=True)
     if first:
