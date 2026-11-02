@@ -1,6 +1,6 @@
-"""LeRobot 训练与部署教程的 Sphinx 配置。"""
+"""Xbotics LeRobot 介绍与上手教程的 Sphinx 配置。"""
 
-project = "LeRobot 训练与部署教程"
+project = "Xbotics LeRobot"
 author = "Xbotics 具身智能社区"
 language = "zh_CN"
 root_doc = "index"

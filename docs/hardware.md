@@ -1,6 +1,6 @@
 # 第 3 章 硬件准备
 
-这一章把两条臂和两路相机接到板子上，确认硬件都正常，再标定机械臂。标定决定了舵机读数和真实关节角度的对应关系，后面录的数据和部署的模型都依赖它。这一章的命令都在板子的网页终端里敲。
+这一章把两条臂和两路相机接到板子上，确认硬件都正常，标定机械臂，最后用遥操作检查一遍。标定决定了舵机读数和真实关节角度的对应关系，后面录的数据和部署的模型都依赖它。这一章的命令都在板子的网页终端里敲。
 
 ## 3.1 接线
 
@@ -80,3 +80,30 @@ CAMERAS="{ top: {type: opencv, index_or_path: /dev/xbotics/top, width: 640, heig
 lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/xbotics/follower --robot.id=follower
 lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/xbotics/leader --teleop.id=leader
 ```
+
+## 3.6 遥操作检查
+
+遥操作是人握着主臂运动，从臂实时跟随。用它检查一遍：两条臂、两路相机和标定都对，硬件就准备好了。
+
+```bash
+lerobot-teleoperate \
+  --robot.type=so101_follower --robot.port=/dev/xbotics/follower --robot.id=follower \
+  --robot.cameras="$CAMERAS" \
+  --teleop.type=so101_leader --teleop.port=/dev/xbotics/leader --teleop.id=leader \
+  --display_data=true
+```
+
+`--robot` 是从臂，`--teleop` 是主臂，`id` 要和标定时一致。按 `Ctrl+C` 停下。
+
+带了 `--display_data=true`，板子会自己开一个网页预览。浏览器打开 `http://<板子IP>:9090`，能看到两路相机画面和关节曲线，启动后要等十几秒才打得开：
+
+<video controls muted playsinline preload="metadata" poster="_static/poster/rerun.jpg" src="_static/media/rerun.mp4"></video>
+
+逐条看：
+
+- 从臂跟得上主臂，没有明显延迟和抖动
+- 每个关节都能转到需要的位置，夹爪能完全张开和闭合
+- 顶视相机能看到整个工作区：机械臂、物体和料盒都在画面里
+- 腕部相机能看到夹爪和要抓的物体
+
+有一项不对，就回到前面几节重新检查接线或标定。四项都对，这套硬件就可以用来录数据了。

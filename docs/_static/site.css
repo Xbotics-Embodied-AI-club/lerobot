@@ -16,3 +16,35 @@ video {
         grid-template-columns: 1fr;
     }
 }
+
+/* 首页展示：截图两两一排，手机上一列 */
+.shot-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0 1.5rem;
+}
+
+.shot-grid figure {
+    margin: 0;
+}
+
+.shot-grid img,
+img.shot {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--pst-color-border, #e3e7ee);
+    box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+}
+
+.shot-grid figcaption {
+    font-size: 0.9em;
+    color: var(--pst-color-text-muted, #667085);
+    margin-top: 0.4rem;
+}
+
+@media (max-width: 640px) {
+    .shot-grid {
+        grid-template-columns: 1fr;
+    }
+}
