@@ -1,4 +1,4 @@
-"""xbotics-config（端侧板网页服务开关）：用替身 systemctl / whiptail / hostname / id 运行真实脚本。
+"""xbotics-config（端侧计算平台网页服务开关）：用替身 systemctl / whiptail / hostname / id 运行真实脚本。
 
 假 systemctl 把每个服务的状态存成文件：installed/<unit>、enabled/<unit>、active/<unit>；
 fail/<unit> 存在时 enable 失败；每次调用记进 calls.log。
@@ -167,7 +167,7 @@ def test_menu_survives_an_uninstalled_service(board):
     assert r.returncode == 0, r.stderr
     assert "xbotics-calibrate-web" in board.enabled()
     log = (board.state / "msgbox.log").read_text()
-    assert "hardware-check：端侧板上未安装 xbotics-hardware-check" in log
+    assert "hardware-check：端侧计算平台上未安装 xbotics-hardware-check" in log
     assert "已开启 calibrate" in log
 
 

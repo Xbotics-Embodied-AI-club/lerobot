@@ -1,4 +1,4 @@
-"""瑞芯微 MPP 硬件编码（h264_rkmpp）与边录边编的统计抽样（Xbotics）。
+"""MPP 硬件编码（h264_rkmpp）与边录边编的统计抽样（Xbotics）。
 
 真机上 MPP 走 GStreamer 的 mpph264enc，CI 上没有这套东西：编码器的选择逻辑与 GStreamer 命令单测，
 两条编码路径（录完再编 / 边录边编）用假的写入器替掉子进程，只校验喂进去的帧与收尾。
@@ -22,7 +22,7 @@ RKMPP = rkmpp.RKMPP_VCODEC
 
 @pytest.fixture
 def on_rockchip(monkeypatch):
-    """装作在接了 MPP 的瑞芯微板子上。"""
+    """装作在带 MPP 编码器的端侧计算平台上。"""
     monkeypatch.setattr(rkmpp, "rkmpp_available", lambda: True)
     monkeypatch.delenv("LEROBOT_RKMPP", raising=False)
 

@@ -11,7 +11,7 @@
 
 移植自 gitee ``zhuzhuangtian/lerobot-v0.5.1-custom`` 的 ``lerobot_tools/01_查看硬件端口.py``；
 改动：默认端口 8005（接板子 8001–8004 的连号）；摄像头不再按名字写死过滤，Linux 上改为只列 USB 相机的画面节点
-（RK3566 这类芯片自带二十多个 rkisp / rkcif 视频节点，打不开、也不是相机），``--all-cameras`` 列全部；标出固定名字。
+（端侧计算平台的芯片自带二十多个 rkisp / rkcif 视频节点，打不开、也不是相机），``--all-cameras`` 列全部；标出固定名字。
 
 用法::
 
@@ -355,7 +355,7 @@ def list_serial_ports() -> list[dict]:
                 "vid_pid": vid_pid,
             }
         )
-    # pyserial 在 Linux 上会滤掉挂在 platform 总线上的 ttyS*，而 RK3566 板子的两条臂正接在板载串口上：
+    # pyserial 在 Linux 上会滤掉挂在 platform 总线上的 ttyS*，而端侧计算平台的两条臂正接在板载串口上：
     # 有固定名字的串口不在列表里就补上
     listed = {port["device"] for port in ports}
     for real, alias in aliases.items():
@@ -794,7 +794,7 @@ def main() -> None:
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
-    # 舵机驱动在 RK3566 上首次导入要十几秒：后台先导入，页面上第一次点「读电机」就不用等
+    # 舵机驱动在端侧计算平台上首次导入要十几秒：后台先导入，页面上第一次点「读电机」就不用等
     threading.Thread(target=lambda: __import__("lerobot.motors.feetech"), daemon=True).start()
 
     print("=" * 50)

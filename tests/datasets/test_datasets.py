@@ -1553,7 +1553,7 @@ def test_valid_video_codecs_constant():
     assert "h264_qsv" in VALID_VIDEO_CODECS
     assert "hevc_videotoolbox" in VALID_VIDEO_CODECS
     assert "hevc_nvenc" in VALID_VIDEO_CODECS
-    assert "h264_rkmpp" in VALID_VIDEO_CODECS  # Xbotics：瑞芯微 MPP
+    assert "h264_rkmpp" in VALID_VIDEO_CODECS  # Xbotics：MPP 硬件编码
     assert len(VALID_VIDEO_CODECS) == 12
 
 

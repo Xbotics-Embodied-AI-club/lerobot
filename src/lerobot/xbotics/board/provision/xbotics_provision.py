@@ -1,15 +1,15 @@
-"""星禾套件端侧板的网络设置页：热点配网，以及连服务器的 SSH 隧道。
+"""星禾套件端侧计算平台的网络设置页：热点配网，以及连服务器的 SSH 隧道。
 
-端侧板开启一个热点，电脑或手机连接后在浏览器中设置 Wi-Fi 与网线，结果实时显示。热点建在 wlan0 上另建的虚拟接口 ap0
-上（AIC8800 支持热点与 Wi-Fi 客户端同时工作、可在不同信道），因此端侧板连接 Wi-Fi 时热点不中断，页面可持续显示连接状态与获得的地址。
-DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d 中的 address=/#/ 让所有域名都解析到端侧板，
+端侧计算平台开启一个热点，电脑或手机连接后在浏览器中设置 Wi-Fi 与网线，结果实时显示。热点建在 wlan0 上另建的虚拟接口 ap0
+上（板载无线网卡支持热点与 Wi-Fi 客户端同时工作、可在不同信道），因此端侧计算平台连接 Wi-Fi 时热点不中断，页面可持续显示连接状态与获得的地址。
+DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d 中的 address=/#/ 让所有域名都解析到端侧计算平台，
 再关闭 ap0 的转发使热点设备无法访问外网，连接热点的电脑或手机检测联网时即弹出本页面。
-局域网中也可打开同一页面（http://<端侧板地址>:8001/，或 80 端口）。只依赖系统 Python 标准库与 nmcli，以 root 运行。
+局域网中也可打开同一页面（http://<端侧地址>:8001/，或 80 端口）。只依赖系统 Python 标准库与 nmcli，以 root 运行。
 
-页面另有「连接服务器」一栏：填写服务器地址、账号与密码（或私钥），端侧板通过 SSH 隧道将服务器上的推理服务、
+页面另有「连接服务器」一栏：填写服务器地址、账号与密码（或私钥），端侧计算平台通过 SSH 隧道将服务器上的推理服务、
 TensorBoard 等端口映射到自身的 0.0.0.0，隧道实现见同目录的 xbotics_tunnel.py。
 
-已在星禾套件端侧板（RK3566 + AIC8800，Ubuntu 22.04、NetworkManager 1.36）上实测；
+已在星禾套件端侧计算平台（Ubuntu 22.04、NetworkManager 1.36）上实测；
 随维护版 LeRobot 安装与升级（python -m lerobot.xbotics.board install），见 XBOTICS.md。
 """
 
@@ -24,7 +24,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# 端侧板上由系统 Python 直接运行本文件（不进入 LeRobot 环境），同目录的隧道模块按文件路径导入
+# 端侧计算平台上由系统 Python 直接运行本文件（不进入 LeRobot 环境），同目录的隧道模块按文件路径导入
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xbotics_tunnel as tunnel  # noqa: E402
 
@@ -32,7 +32,7 @@ AP_IFACE, STA_IFACE, ETH_IFACE = "ap0", "wlan0", "eth0"
 AP_CON = "xbotics-ap"
 TRIAL_CON = "xbotics-try"  # 试连新 Wi-Fi 时的临时配置名，连接成功后改为网络名
 AP_ADDR = "10.42.0.1"
-# 端侧板上的网页服务端口连号（8001–8006），本页在 8001。
+# 端侧计算平台上的网页服务端口连号（8001–8006），本页在 8001。
 # 80 端口提供同一页面：连接热点的设备检测联网只访问 80，弹出本页依赖它；`http://10.42.0.1` 不带端口也可打开。
 PORTS = (80, 8001)
 PAGE = (Path(__file__).resolve().parent / "index.html").read_bytes()
@@ -69,7 +69,7 @@ def ap_ssid() -> str:
 
 
 def ensure_hotspot() -> None:
-    """建立虚拟接口 ap0，建立（或更新）并开启热点连接；热点设备不经端侧板访问外网。"""
+    """建立虚拟接口 ap0，建立（或更新）并开启热点连接；热点设备不经端侧计算平台访问外网。"""
     if not Path(f"/sys/class/net/{AP_IFACE}").exists():
         subprocess.run(
             ["iw", "dev", STA_IFACE, "interface", "add", AP_IFACE, "type", "__ap"],
@@ -95,7 +95,7 @@ def ensure_hotspot() -> None:
     if code != 0:
         raise RuntimeError(f"热点未能开启：{err}")
     # 热点仅供网络设置页使用：关闭 ap0 的转发，热点设备无法访问外网，检测联网失败后才会弹出本页。
-    # 共享模式激活时会开启全局转发，因此须在 connection up 之后关闭。端侧板上未安装 iptables / nft，
+    # 共享模式激活时会开启全局转发，因此须在 connection up 之后关闭。端侧计算平台上未安装 iptables / nft，
     # 此处只写内核开关，不依赖它们
     Path(f"/proc/sys/net/ipv4/conf/{AP_IFACE}/forwarding").write_text("0\n")
 
@@ -299,7 +299,7 @@ def parse_wired(cfg: dict) -> tuple[str, str, list[str]]:
 def apply_wired(cfg: dict) -> None:
     name = eth_connection()
     if not name:
-        STATUS.set_job("wired", "failed", "端侧板上没有有线网络的连接配置")
+        STATUS.set_job("wired", "failed", "端侧计算平台上没有有线网络的连接配置")
         return
     if cfg.get("mode") == "auto":
         args = ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
@@ -343,11 +343,11 @@ TUNNEL_ERRORS = (
     ("Permission denied", "登录被拒：账号、密码或私钥不正确，请修改后点击「保存并连接」"),
     ("Could not resolve hostname", "找不到该服务器地址，请检查拼写"),
     ("Connection refused", "服务器拒绝连接：SSH 端口不正确，或服务器未开启 SSH 服务"),
-    ("Connection timed out", "连不上服务器：地址不正确，或端侧板所在网络无法访问该服务器"),
-    ("No route to host", "连不上服务器：端侧板所在网络无法访问该服务器"),
-    ("Network is unreachable", "端侧板尚未联网：请先在「Wi-Fi」或「网线」标签中连接网络"),
-    ("cannot listen to port", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
-    ("Address already in use", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
+    ("Connection timed out", "连不上服务器：地址不正确，或端侧计算平台所在网络无法访问该服务器"),
+    ("No route to host", "连不上服务器：端侧计算平台所在网络无法访问该服务器"),
+    ("Network is unreachable", "端侧计算平台尚未联网：请先在「Wi-Fi」或「网线」标签中连接网络"),
+    ("cannot listen to port", "端侧计算平台上的端口已被其他程序占用，请更换端侧端口"),
+    ("Address already in use", "端侧计算平台上的端口已被其他程序占用，请更换端侧端口"),
     (
         "REMOTE HOST IDENTIFICATION HAS CHANGED",
         "服务器指纹已变化（可能重装过系统）：再次点击「保存并连接」即可重新识别",
@@ -382,10 +382,10 @@ def tunnel_error(tid: str) -> str:
 
 
 def probe_forward(port: int) -> str:
-    """经隧道连接一次端侧板上的该端口，不发送任何数据。
+    """经隧道连接一次端侧计算平台上的该端口，不发送任何数据。
 
     ok = 服务器端有服务（连接保持打开、等待客户端先发送，或服务先发来数据）；closed = 连接后立即被断开
-    （ssh 在服务器端连不上该端口，随即关闭端侧板这一侧的连接）；down = 端侧板上没有监听（隧道未建立）。
+    （ssh 在服务器端连不上该端口，随即关闭端侧计算平台这一侧的连接）；down = 端侧计算平台上没有监听（隧道未建立）。
     不发送数据，是因为 gRPC 这类协议收到无法识别的数据会直接断开，发送后就无法与「无服务」区分。
     """
     try:
@@ -446,7 +446,7 @@ TUNNELS = Tunnels()
 def parse_tunnel(body: dict, old: dict, ports_in_use: set[int]) -> dict:
     """把页面上填写的一台服务器的设置校验成配置；哪一项有误，报错就指明哪一项。
 
-    未重新填写的密码与私钥沿用原值。ports_in_use 是其他服务器已占用的端侧板端口，同一端口不能映射两次。
+    未重新填写的密码与私钥沿用原值。ports_in_use 是其他服务器已占用的端侧端口，同一端口不能映射两次。
     """
     name = str(body.get("name", "")).strip()
     host = str(body.get("host", "")).strip()
@@ -486,14 +486,14 @@ def parse_tunnel(body: dict, old: dict, ports_in_use: set[int]) -> dict:
         except (TypeError, ValueError):
             raise ValueError(f"第 {i} 条映射的端口须为数字") from None
         if not (1024 <= local <= 65535 and 1 <= remote <= 65535):
-            raise ValueError(f"第 {i} 条映射：端侧板端口须在 1024–65535 之间，服务器端口须在 1–65535 之间")
+            raise ValueError(f"第 {i} 条映射：端侧端口须在 1024–65535 之间，服务器端口须在 1–65535 之间")
         if local in seen or local in PORTS or 8001 <= local <= 8007 or local in (9090, 9091):
             raise ValueError(
-                f"第 {i} 条映射：端侧板端口 {local} 已被占用（8001–8007 为端侧板自带的网页，9090、9091 为录数据预览）"
+                f"第 {i} 条映射：端侧端口 {local} 已被占用（8001–8007 为端侧计算平台自带的网页，9090、9091 为录数据预览）"
             )
         if local in ports_in_use:
             raise ValueError(
-                f"第 {i} 条映射：端侧板端口 {local} 已被另一台服务器的映射占用，请更换端侧板端口"
+                f"第 {i} 条映射：端侧端口 {local} 已被另一台服务器的映射占用，请更换端侧端口"
             )
         seen.add(local)
         remote_host = str(f.get("remote_host") or "127.0.0.1").strip()
@@ -551,12 +551,12 @@ def save_tunnel(body: dict) -> None:
         STATUS.set_job("tunnel", "failed", f"隧道服务未能启动：{out}")
         return
     TUNNELS.probed_at.pop(tid, None)
-    # 登录与建立转发通常需要两三秒；等待端侧板上的端口开始监听，最多 15 秒，超时则读取报错
+    # 登录与建立转发通常需要两三秒；等待端侧计算平台上的端口开始监听，最多 15 秒，超时则读取报错
     for _ in range(15):
         time.sleep(1)
         if all(probe_forward(f["local"]) != "down" for f in cfg["forwards"]):
             names = "、".join(f"{f['name']}（{f['local']}）" for f in cfg["forwards"])
-            STATUS.set_job("tunnel", "done", f"已连接 {cfg['name']}：{names} 已映射到端侧板")
+            STATUS.set_job("tunnel", "done", f"已连接 {cfg['name']}：{names} 已映射到端侧计算平台")
             return
     STATUS.set_job("tunnel", "failed", tunnel_error(tid) or "隧道尚未连接，请稍后查看状态")
 

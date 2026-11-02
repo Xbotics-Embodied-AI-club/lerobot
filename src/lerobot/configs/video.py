@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and the chosen video backend.
 # Determines the order of preference for auto-selection when vcodec="auto" is used.
-# Xbotics：瑞芯微 MPP 硬件 H.264（RK3566 / RK3576 板子，经 GStreamer，见 lerobot.datasets.rkmpp）。
+# Xbotics：端侧计算平台上的 MPP 硬件 H.264（经 GStreamer，见 lerobot.datasets.rkmpp）。
 # PyAV 的 FFmpeg 不含它，所以不经 detect_available_encoders 探测，单独判断。
 RKMPP_VCODEC = "h264_rkmpp"
 HW_VIDEO_CODECS = [
@@ -174,7 +174,7 @@ class VideoEncoderConfig:
         return self.stats_every or rkmpp.default_stats_every()
 
     def _prefer_rkmpp(self, explicit_auto: bool) -> bool:
-        """RGB 编码在瑞芯微板子上改走 MPP：``auto`` 总是优先它；默认的 libsvtav1 除非 ``LEROBOT_RKMPP=0``。"""
+        """RGB 编码在带 MPP 编码器的端侧计算平台上改走 MPP：``auto`` 总是优先它；默认的 libsvtav1 除非 ``LEROBOT_RKMPP=0``。"""
         if self._DEFAULT_CHANNELS != 3:
             return False
         if not explicit_auto and os.environ.get("LEROBOT_RKMPP", "1") == "0":

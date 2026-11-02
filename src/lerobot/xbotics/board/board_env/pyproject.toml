@@ -1,4 +1,4 @@
-# 星禾套件端侧板上的 LeRobot 环境（/root/xbotics），由维护版 LeRobot 维护。xbotics-config update 升级时只修改
+# 星禾套件端侧计算平台上的 LeRobot 环境（/root/xbotics），由维护版 LeRobot 维护。xbotics-config update 升级时只修改
 # 维护版管理的几项：Python 版本、下列依赖、override-dependencies、LeRobot 的源；其余（自行 uv add 的包等）保持不变。
 [project]
 name = "xbotics-board"

@@ -163,7 +163,7 @@
   .fwd .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 8px; border-radius: 8px; }
   .fwd .x:hover { background: var(--bad-soft); color: var(--bad); }
   .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  /* 手机上：名称独占一行，下一行为「端侧板端口 → 服务器端口」 */
+  /* 手机上：名称独占一行，下一行为「端侧端口 → 服务器端口」 */
   @media (max-width: 520px) {
     .fwd { grid-template-columns: 1fr auto 1fr auto; padding: 10px; border: 1px solid var(--line); border-radius: 11px; }
     .fwd .n { grid-column: 1 / -1; }
@@ -257,7 +257,7 @@
   </section>
 
   <section class="panel" data-panel="server">
-    <div class="sec-note">通过 SSH 将服务器上的端口映射到端侧板。推理服务与 TensorBoard 可在同一台或不同的服务器上，分别添加即可；连接中断后自动重连。</div>
+    <div class="sec-note">通过 SSH 将服务器上的端口映射到端侧计算平台。推理服务与 TensorBoard 可在同一台或不同的服务器上，分别添加即可；连接中断后自动重连。</div>
     <div id="srv-list"></div>
     <div class="actions" id="srv-add-box"><button class="btn ghost" id="srv-add"><svg><use href="#i-plus"/></svg>添加服务器</button></div>
 
@@ -278,7 +278,7 @@
         <input type="file" id="t-key-file" class="hidden">
         <label class="f" style="margin-top:10px"><span>私钥口令（无口令可留空）</span><div class="pw"><input id="t-phrase" type="password" autocomplete="off"><button type="button" data-eye="t-phrase" aria-label="显示口令"><svg><use href="#i-eye"/></svg></button></div></label>
       </div>
-      <div class="fwd fwd-head"><span>映射名称</span><span>端侧板端口</span><span></span><span>服务器端口</span><span></span></div>
+      <div class="fwd fwd-head"><span>映射名称</span><span>端侧端口</span><span></span><span>服务器端口</span><span></span></div>
       <div id="t-fwds"></div>
       <div class="presets" id="t-presets"></div>
       <div class="actions">
@@ -289,7 +289,7 @@
   </section>
 
   <section class="panel" data-panel="open">
-    <div id="open-empty" class="empty hidden">端侧板尚未联网。在「Wi-Fi」或「网线」中连接网络后，这里列出可在你的网络中打开的网页。</div>
+    <div id="open-empty" class="empty hidden">端侧计算平台尚未联网。在「Wi-Fi」或「网线」中连接网络后，这里列出可在你的网络中打开的网页。</div>
     <div id="open-box">
       <div class="seg seg-hosts" id="hosts"></div>
       <div class="tiles" id="links"></div>
@@ -306,7 +306,7 @@ const icon = (name, cls = "") => `<svg class="${cls}"><use href="#i-${name}"/></
 let wiredFilled = false, pickedHost = null, lastStatus = null, servers = [], presets = [], editing = null;
 let shownAt = 0, dismissedAt = -1;  // 已关闭的那条消息不再显示；下一次操作的消息时间不同，照常显示
 
-// 端侧板上的网页服务端口连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code · 8005 硬件检测 · 8006 网页标定
+// 端侧计算平台上的网页服务端口连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code · 8005 硬件检测 · 8006 网页标定
 const SERVICES = [[8001, "网络设置", "gear"], [8002, "网页终端", "term"], [8003, "JupyterLab", "book"],
                   [8004, "VS Code", "code"], [8005, "硬件检测", "chip"], [8006, "网页标定", "target"]];
 const TABS = ["wifi", "wired", "server", "open"];
@@ -389,7 +389,7 @@ function renderServers() {
       const p = v.probes[f.local];
       const st = !v.enabled ? null : p === "ok" ? ["ok", "畅通"] : p === "closed" ? ["mid", "服务器上该端口无服务"] : p === "down" ? ["bad", "未映射"] : ["idle", "…"];
       const open = (p === "ok" && f.web && ip) ? `<a href="http://${esc(ip)}:${f.local}" target="_blank">打开</a>` : "";
-      return `<div class="map"><b>${esc(f.name)}</b><span class="route">端侧板 0.0.0.0:${f.local} → 服务器 ${esc(f.remote_host)}:${f.remote}</span>${open}${st ? `<span class="pill ${st[0]}">${st[1]}</span>` : ""}</div>`;
+      return `<div class="map"><b>${esc(f.name)}</b><span class="route">端侧 0.0.0.0:${f.local} → 服务器 ${esc(f.remote_host)}:${f.remote}</span>${open}${st ? `<span class="pill ${st[0]}">${st[1]}</span>` : ""}</div>`;
     }).join("");
     const err = v.enabled && v.state !== "active" && v.error ? `<div class="tun-err">${esc(v.error)}</div>` : "";
     return `<div class="srv" data-id="${esc(v.id)}">
@@ -416,7 +416,7 @@ function fwdRow(f = {}) {
   row.className = "fwd";
   row.dataset.web = f.web === false ? "0" : "1";
   row.innerHTML = `<input class="n" placeholder="映射名称，如 TensorBoard" value="${esc(f.name || "")}">` +
-    `<input class="l" inputmode="numeric" placeholder="端侧板端口" title="端侧板端口" value="${esc(f.local || "")}"><span class="arrow">→</span>` +
+    `<input class="l" inputmode="numeric" placeholder="端侧端口" title="端侧端口" value="${esc(f.local || "")}"><span class="arrow">→</span>` +
     `<input class="r" placeholder="服务器端口" title="服务器端口；目标不在服务器本机时写成 地址:端口" value="${esc(remote)}"><button class="x" title="删除此条">${icon("x")}</button>`;
   row.querySelector(".x").onclick = () => row.remove();
   $("t-fwds").appendChild(row);

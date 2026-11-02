@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 星禾套件端侧板的网页服务开关与升级（像树莓派的 raspi-config）：
+# 星禾套件端侧计算平台的网页服务开关与升级（像树莓派的 raspi-config）：
 #   xbotics-config                 弹出菜单，空格勾选要开的服务，回车生效
 #   xbotics-config status          列出各服务是否开机自启、是否正在运行及网址
 #   xbotics-config enable  <名字>…  开启并设为开机自启
 #   xbotics-config disable <名字>…  关闭并取消开机自启
-#   xbotics-config update          升级 LeRobot，并一同升级端侧板上的其余内容（网页、服务、设置）
+#   xbotics-config update          升级 LeRobot，并一同升级端侧计算平台上的其余内容（网页、服务、设置）
 # 名字：terminal jupyter vscode hardware-check calibrate（all = 全部）。
-# 8001 网络设置页不在此列：关闭后将无法通过热点进入端侧板修改网络；连接服务器的隧道在该页面设置。
+# 8001 网络设置页不在此列：关闭后将无法通过热点进入端侧计算平台修改网络；连接服务器的隧道在该页面设置。
 # 本脚本随维护版 LeRobot 发布（lerobot/xbotics/board/config/），升级时会一并更新为新版。
 set -euo pipefail
 
@@ -70,7 +70,7 @@ set_service() { # set_service <名字> on|off；失败时报原因并返回 1
   row=$(find_service "$1") || return 1
   unit=$(field "$row" 3)
   if ! systemctl cat "$unit" >/dev/null 2>&1; then
-    echo "$1：端侧板上未安装 $unit（安装方法见 XBOTICS.md）" >&2
+    echo "$1：端侧计算平台上未安装 $unit（安装方法见 XBOTICS.md）" >&2
     return 1
   fi
   if [[ "$2" == on ]]; then

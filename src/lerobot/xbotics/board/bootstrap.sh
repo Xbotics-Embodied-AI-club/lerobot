@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 星禾套件端侧板一键安装，适用于新端侧板以及按旧版手册安装过的端侧板（以 root 在端侧板上执行）：
+# 星禾套件端侧计算平台一键安装，适用于新端侧计算平台以及按旧版手册安装过的端侧计算平台（以 root 在端侧计算平台上执行）：
 #   curl -fsSL https://raw.githubusercontent.com/Xbotics-Embodied-AI-club/lerobot/xbotics-v0.6.1/src/lerobot/xbotics/board/bootstrap.sh | bash
-# 它安装 uv、建立 LeRobot 环境（/root/xbotics），再由环境中的 LeRobot 安装端侧板上的其余内容。
+# 它安装 uv、建立 LeRobot 环境（/root/xbotics），再由环境中的 LeRobot 安装端侧计算平台上的其余内容。
 # 之后升级全部只需执行：xbotics-config update
 # 设 XBOTICS_REF=<分支、标签或提交> 可从其他版本安装（默认标签 xbotics-v0.6.1）。
 set -euo pipefail

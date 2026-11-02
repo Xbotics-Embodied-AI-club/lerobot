@@ -494,7 +494,7 @@ def encode_video_frames(
         width, height = dummy_image.size
 
     if vcodec == RKMPP_VCODEC:
-        # Xbotics：瑞芯微 MPP 硬件编码，经 GStreamer（见 lerobot.datasets.rkmpp）
+        # Xbotics：MPP 硬件编码，经 GStreamer（见 lerobot.datasets.rkmpp）
         if is_depth:
             raise ValueError(f"{RKMPP_VCODEC} only encodes RGB frames")
         writer = _open_rkmpp_writer(video_path, width, height, fps, video_encoder)

@@ -1,4 +1,4 @@
-"""瑞芯微 MPP 硬件 H.264 编码（Xbotics）：录数据时用 RK3566 / RK3576 这类板子芯片自带的编码器。
+"""MPP 硬件 H.264 编码（Xbotics）：录数据时用端侧计算平台自带的硬件编码器。
 
 PyAV 自带的 FFmpeg 不含 rkmpp，所以经 GStreamer：RGB 原图从标准输入喂给
 ``gst-launch-1.0 fdsrc ! rawvideoparse ! mpph264enc ! h264parse ! mp4mux ! filesink``。
@@ -37,7 +37,7 @@ __all__ = [
     "rkmpp_available",
 ]
 
-# 弱 CPU 板子上，边录边编时逐帧算图像统计是录制的瓶颈（RK3566 上每路每帧约 15 ms）。
+# 弱 CPU 板子上，边录边编时逐帧算图像统计是录制的瓶颈（端侧计算平台上每路每帧约 15 ms）。
 # 每 10 帧算一次，均值差 ≤0.00025、q99 差 ≤0.012，录制从 13–22 fps 回到相机上限 29 fps。
 ARM_STATS_EVERY = 10
 _ARM_MACHINES = ("aarch64", "arm64", "armv7l")
@@ -54,7 +54,7 @@ def default_stats_every() -> int:
 
 @functools.cache
 def rkmpp_available() -> bool:
-    """当前机器能否用 MPP 编码：瑞芯微芯片 + gst-launch-1.0 + GStreamer 的 mpph264enc 插件。"""
+    """当前机器能否用 MPP 编码：带 MPP 的芯片 + gst-launch-1.0 + GStreamer 的 mpph264enc 插件。"""
     if not is_arm() or shutil.which("gst-launch-1.0") is None or shutil.which("gst-inspect-1.0") is None:
         return False
     try:

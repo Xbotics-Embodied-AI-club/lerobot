@@ -1,14 +1,14 @@
-"""把星禾套件端侧板安装（或升级）为本版维护版 LeRobot 对应的状态。
+"""把星禾套件端侧计算平台安装（或升级）为本版维护版 LeRobot 对应的状态。
 
-端侧板上需要维护的内容全部在本包中，升级 LeRobot 即升级全部。一次安装下列各项，重复运行只修改有变化的部分
-（以 root 在端侧板的 LeRobot 环境中运行）：
+端侧计算平台上需要维护的内容全部在本包中，升级 LeRobot 即升级全部。一次安装下列各项，重复运行只修改有变化的部分
+（以 root 在端侧计算平台的 LeRobot 环境中运行）：
 
 - 系统：开机不进入桌面、CPU 与内存锁定最高频率、相机不自动降帧、提高 inotify 监视数上限（VS Code 需要）、
   机械臂与相机的固定设备名（udev）
 - 网络设置页（8001，热点配网 + 连服务器的 SSH 隧道）
 - 网页终端 ttyd（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，版本钉在 ``CODE_SERVER_VERSION``）
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
-- 端侧板 LeRobot 环境 ``/root/xbotics`` 的 pyproject：只修改 ``board_env/pyproject.toml`` 所管理的几项，其余保持不变
+- 端侧计算平台 LeRobot 环境 ``/root/xbotics`` 的 pyproject：只修改 ``board_env/pyproject.toml`` 所管理的几项，其余保持不变
 
 首次安装开启 8002–8006 五个网页服务；之后再次安装（升级）保持 ``xbotics-config`` 中的开关不变。
 正在运行的服务有改动时重启；运行 LeRobot 代码的服务（JupyterLab、硬件检测、网页标定）在 LeRobot 版本变化时重启。
@@ -33,7 +33,7 @@ ROOT_HOME = Path("/root")
 ENV_DIR = ROOT_HOME / "xbotics"
 UV = ROOT_HOME / ".local/bin/uv"
 MARKER = Path("/etc/xbotics/installed")  # 首次安装后写入（内容为当时安装的 LeRobot 版本）；存在即视为升级
-DEFAULT_PASSWORD = "123456"  # 与端侧板 root 密码相同：网页终端、JupyterLab、VS Code 共用一个密码
+DEFAULT_PASSWORD = "123456"  # 与端侧计算平台 root 密码相同：网页终端、JupyterLab、VS Code 共用一个密码
 CODE_SERVER_VERSION = "4.141.0"
 CODE_SERVER_EXTENSIONS = ("ms-python.python", "detachhead.basedpyright", "tamasfe.even-better-toml")
 APT_PACKAGES = ("ttyd", "iw", "whiptail")
@@ -41,7 +41,7 @@ SYSTEMD = Path("/etc/systemd/system")
 
 # (包内文件, 安装位置, 权限, 使用它的 systemd 单元)
 FILES = [
-    ("udev/99-xbotics-rk3566.rules", "/etc/udev/rules.d/99-xbotics-rk3566.rules", 0o644, "udev"),
+    ("udev/99-xbotics-ports.rules", "/etc/udev/rules.d/99-xbotics-ports.rules", 0o644, "udev"),
     ("udev/99-xbotics-camera-fps.rules", "/etc/udev/rules.d/99-xbotics-camera-fps.rules", 0o644, "udev"),
     ("system/xbotics-maxfreq.service", SYSTEMD / "xbotics-maxfreq.service", 0o644, "xbotics-maxfreq"),
     ("system/99-xbotics-inotify.conf", "/etc/sysctl.d/99-xbotics-inotify.conf", 0o644, "sysctl"),
@@ -94,7 +94,7 @@ def write_if_changed(dest: Path, content: bytes, mode: int) -> bool:
     return True
 
 
-# ---------- 端侧板的 LeRobot 环境 ----------
+# ---------- 端侧计算平台的 LeRobot 环境 ----------
 
 
 def req_name(req: str) -> str:
@@ -138,7 +138,7 @@ def ensure_tomlkit(template: str) -> None:
 
 
 def render_env_pyproject(template: str, old: str | None) -> str:
-    """升级端侧板环境的 pyproject：只修改维护版管理的几项，其余保持不变。
+    """升级端侧计算平台环境的 pyproject：只修改维护版管理的几项，其余保持不变。
 
     保持不变的有学员用 uv add 添加的包、源、索引、依赖组和注释。管理的几项：Python 版本、模板中的依赖（保留学员为它们
     添加的可选组）、override-dependencies、LeRobot 的源。LeRobot 的源指向分支或提交（用 bootstrap.sh 的 XBOTICS_REF
@@ -186,7 +186,7 @@ def render_env_pyproject(template: str, old: str | None) -> str:
 
 
 def sync_env() -> None:
-    """按模板升级端侧板环境的 pyproject，有变化时重新同步依赖。
+    """按模板升级端侧计算平台环境的 pyproject，有变化时重新同步依赖。
 
     同步失败时把 pyproject 恢复原样再抛出：否则文件已是新版，重试时判断为「已是最新」而跳过同步，缺的依赖补不上。
     """
@@ -306,7 +306,7 @@ def board_hostname() -> bool:
     """主机名统一为 xbotics-XXXX（后四位同热点名，取自 Wi-Fi 网卡地址），有改动时返回 True。
 
     厂家镜像的默认主机名带厂家名，会出现在终端提示符与局域网的 .local 名字里；后四位每块板不同，
-    同一局域网里有几块端侧板时 .local 名字也不冲突。已经是 xbotics- 开头的不再修改。
+    同一局域网里有几台端侧计算平台时 .local 名字也不冲突。已经是 xbotics- 开头的不再修改。
     """
     current = socket.gethostname()
     if current.startswith("xbotics-"):
@@ -360,7 +360,20 @@ def running_tunnels() -> list[str]:
 
 
 def remove_obsolete() -> None:
-    """删除旧版留下、现已不用的文件：单台服务器的隧道服务（已改为每台服务器一个实例）。"""
+    """删除旧版留下、现已不用的文件。
+
+    包括：改名前的 udev 规则（凡是 ``99-xbotics-*.rules`` 而不在 ``FILES`` 中的）；
+    单台服务器的隧道服务（已改为每台服务器一个实例）。
+    """
+    current = {Path(dest) for _, dest, _, _ in FILES}
+    stale_rules = [p for p in Path("/etc/udev/rules.d").glob("99-xbotics-*.rules") if p not in current]
+    for path in stale_rules:
+        path.unlink()
+        say(f"已移除旧版的 {path}")
+    if stale_rules:
+        run("udevadm", "control", "--reload")
+        run("udevadm", "trigger", "--action=add", "--subsystem-match=tty", "--subsystem-match=video4linux")
+
     old_unit = SYSTEMD / "xbotics-tunnel.service"
     if old_unit.exists():
         systemctl("disable", "--now", "xbotics-tunnel")
@@ -385,12 +398,12 @@ def plan_restarts(
 
 
 def install() -> None:
-    """安装或升级端侧板上的全部内容；首次安装开启五个网页服务，升级保持现有开关，只重启有改动的服务。"""
+    """安装或升级端侧计算平台上的全部内容；首次安装开启五个网页服务，升级保持现有开关，只重启有改动的服务。"""
     if os.geteuid() != 0:
         raise SystemExit(
             "须以 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
         )
-    # 按旧版手册手工安装的端侧板没有 MARKER，但已有这些服务文件：按升级处理，不改变学员关闭的服务
+    # 按旧版手册手工安装的端侧计算平台没有 MARKER，但已有这些服务文件：按升级处理，不改变学员关闭的服务
     legacy = any((SYSTEMD / f"{u}.service").exists() for u in ("xbotics-provision", "xbotics-hardware-check"))
     first = not MARKER.exists() and not legacy
     version = lerobot_version()

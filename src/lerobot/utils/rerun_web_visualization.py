@@ -7,7 +7,7 @@
   回给它的是板子的 127.0.0.1，别的机器上打开就会去连学员自己的电脑。
 - rerun 0.3x 的数据服务默认只接受 localhost 页面的跨源请求，别的机器上打开会被浏览器拦下（服务端照样回 200），
   所以放行「任何主机、查看器那个端口」。0.26 没有这个参数，它本来就不拦。
-- 推送放进子进程：两张 JPEG 的 ``rr.log`` 在 RK3566 上要十几毫秒，放在录制进程里会和录制抢 GIL；
+- 推送放进子进程：两张 JPEG 的 ``rr.log`` 在端侧计算平台上要十几毫秒，放在录制进程里会和录制抢 GIL；
   主进程每 0.1 秒取一次最新的画面（默认 10 次/秒），后台线程压 JPEG 后交给子进程。
   实测录制 28.7 fps 不受影响，预览 10 次/秒。
 
@@ -157,7 +157,7 @@ def _serve(jobs: Any, web_port: int, grpc_port: int, memory_limit: str) -> None:
         jpegs, obs_scalars, act_scalars = job
         for key, data in jpegs.items():
             rr.log(key, rr.EncodedImage(contents=data, media_type="image/jpeg"), static=True)
-        # 关节读数与动作各合成一条推（逐个值推一条在 RK3566 上要 7 ms，合并后 0.8 ms）
+        # 关节读数与动作各合成一条推（逐个值推一条在端侧计算平台上要 7 ms，合并后 0.8 ms）
         if obs_scalars:
             rr.log(f"{OBS_STR}.state", rr.Scalars(list(obs_scalars.values())))
         if act_scalars:

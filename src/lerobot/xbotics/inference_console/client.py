@@ -467,7 +467,7 @@ class PolicyRobotClientConfig:
         default="",
         metadata={
             "help": "Device name displayed in the web UI to distinguish multiple deployed robots "
-            "(e.g. 'RK3566-1')."
+            "(e.g. 'xbotics-1')."
         },
     )
     task_presets_file: str = field(
