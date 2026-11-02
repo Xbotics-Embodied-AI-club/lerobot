@@ -147,7 +147,8 @@
   .srv-top .ico { width: 30px; height: 30px; border-radius: 9px; }
   .srv-top .ico svg { width: 17px; height: 17px; }
   .srv-sub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; word-break: break-all; }
-  .srv .actions { margin-top: 10px; }
+  .srv .actions { margin-top: 10px; flex-wrap: nowrap; }
+  .srv .actions .btn { flex: 1 1 0; flex-basis: 0 !important; }
   .map { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line); font-size: 13.5px; flex-wrap: wrap; }
   .map:first-of-type { margin-top: 8px; }
   .map .route { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -256,7 +257,7 @@
   </section>
 
   <section class="panel" data-panel="server">
-    <div class="sec-note">通过 SSH 将服务器上的端口映射到端侧板：端侧板上的程序访问 127.0.0.1，你的电脑访问端侧板的 IP。推理服务与 TensorBoard 可以在同一台服务器上，也可以在不同的服务器上，每台服务器分别添加。连接中断后自动重连。</div>
+    <div class="sec-note">通过 SSH 将服务器上的端口映射到端侧板。推理服务与 TensorBoard 可在同一台或不同的服务器上，分别添加即可；连接中断后自动重连。</div>
     <div id="srv-list"></div>
     <div class="actions" id="srv-add-box"><button class="btn ghost" id="srv-add"><svg><use href="#i-plus"/></svg>添加服务器</button></div>
 
@@ -313,7 +314,7 @@ const TABS = ["wifi", "wired", "server", "open"];
 function showTab(tab) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === tab));
-  history.replaceState(null, "", "#" + tab);
+  if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
 }
 function segValue(id) { return $(id).querySelector("button.on").dataset.v; }
 function setSeg(id, v) { $(id).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === v)); }
@@ -516,7 +517,10 @@ $("srv-list").onclick = (e) => {
     auth: v.auth, forwards: v.forwards}).then(() => setTimeout(refreshServers, 1500));
 };
 
-showTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "wifi");
+// 网址中的 #wifi / #wired / #server / #open 对应标签：文档可直接链接到某一项，浏览器后退也能切换
+const tabFromHash = () => (TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "wifi");
+window.addEventListener("hashchange", () => showTab(tabFromHash()));
+showTab(tabFromHash());
 refresh(); refreshServers();
 setInterval(refresh, 2000); setInterval(refreshServers, 4000);
 </script>

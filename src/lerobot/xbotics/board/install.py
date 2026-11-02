@@ -3,7 +3,8 @@
 端侧板上需要维护的内容全部在本包中，升级 LeRobot 即升级全部。一次安装下列各项，重复运行只修改有变化的部分
 （以 root 在端侧板的 LeRobot 环境中运行）：
 
-- 系统：开机不进入桌面、CPU 与内存锁定最高频率、相机不自动降帧、机械臂与相机的固定设备名（udev）
+- 系统：开机不进入桌面、CPU 与内存锁定最高频率、相机不自动降帧、提高 inotify 监视数上限（VS Code 需要）、
+  机械臂与相机的固定设备名（udev）
 - 网络设置页（8001，热点配网 + 连服务器的 SSH 隧道）
 - 网页终端 ttyd（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，版本钉在 ``CODE_SERVER_VERSION``）
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
@@ -43,6 +44,7 @@ FILES = [
     ("udev/99-xbotics-rk3566.rules", "/etc/udev/rules.d/99-xbotics-rk3566.rules", 0o644, "udev"),
     ("udev/99-xbotics-camera-fps.rules", "/etc/udev/rules.d/99-xbotics-camera-fps.rules", 0o644, "udev"),
     ("system/xbotics-maxfreq.service", SYSTEMD / "xbotics-maxfreq.service", 0o644, "xbotics-maxfreq"),
+    ("system/99-xbotics-inotify.conf", "/etc/sysctl.d/99-xbotics-inotify.conf", 0o644, "sysctl"),
     ("provision/xbotics_provision.py", "/opt/xbotics/provision/xbotics_provision.py", 0o644, "xbotics-provision"),
     ("provision/xbotics_tunnel.py", "/opt/xbotics/provision/xbotics_tunnel.py", 0o644, "xbotics-provision xbotics-tunnel"),
     ("provision/index.html", "/opt/xbotics/provision/index.html", 0o644, "xbotics-provision"),
@@ -411,6 +413,8 @@ def install() -> None:
         changed_units.add("code-server@root")
     bashrc()
 
+    if "sysctl" in changed_units:
+        run("sysctl", "--load=/etc/sysctl.d/99-xbotics-inotify.conf", capture_output=True)
     if "udev" in changed_units:
         run("udevadm", "control", "--reload")
         run("udevadm", "trigger", "--action=add", "--subsystem-match=tty", "--subsystem-match=video4linux")

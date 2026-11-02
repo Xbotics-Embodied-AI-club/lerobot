@@ -118,7 +118,7 @@ status() {
   for conf in /etc/xbotics/tunnels/*.json; do
     [[ -e "$conf" ]] || continue
     id=$(basename "$conf" .json)
-    name=$(python3 -c 'import json, sys; c = json.load(open(sys.argv[1])); print(f"{c[\"name\"]}（{c[\"user\"]}@{c[\"host\"]}）")' "$conf")
+    name=$(python3 -c 'import json, sys; c = json.load(open(sys.argv[1])); print("%s（%s@%s）" % (c["name"], c["user"], c["host"]))' "$conf")
     printf '%-16s %-6s %-8s %-8s %s\n' "tunnel@$id" - "$(systemctl is-enabled "xbotics-tunnel@$id" 2>/dev/null || true)" \
       "$(systemctl is-active "xbotics-tunnel@$id" 2>/dev/null || true)" "连接服务器：$name"
   done
