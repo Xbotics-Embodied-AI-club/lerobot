@@ -130,17 +130,15 @@ update() {
     since=$(date '+%Y-%m-%d %H:%M:%S')
     systemd-run --unit="$unit" --quiet --working-directory=/root/xbotics \
       -p Environment=HOME=/root -p Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-      /bin/bash -c 'set -euo pipefail
-        echo "· 升级 LeRobot（取标签现在指向的版本）"
-        uv lock --upgrade-package lerobot
-        uv sync
-        exec .venv/bin/python -m lerobot.xbotics.board install'
+      /bin/bash -c 'set -euo pipefail; echo "· 升级 LeRobot（取标签现在指向的版本）"; uv lock --upgrade-package lerobot; uv sync; exec .venv/bin/python -m lerobot.xbotics.board install'
   fi
-  journalctl -f -u "$unit" -o cat --since "${since:-today}" &
+  # 只看升级本身的输出：systemd 自己记的「Started / Deactivated / Consumed」那几行滤掉
+  journalctl -f -u "$unit" -o cat --since "${since:-today}" | grep --line-buffered -v "^$unit.service: \|^Started \|^Starting " &
   local follower=$!
   while [[ "$(systemctl is-active "$unit" 2>/dev/null)" =~ ^(active|activating|deactivating)$ ]]; do sleep 1; done
   sleep 1
   kill "$follower" 2>/dev/null || true
+  pkill -f "journalctl -f -u $unit" 2>/dev/null || true
   result=$(systemctl show -p Result --value "$unit" 2>/dev/null || echo success)
   if [[ "$result" != success ]]; then
     systemctl reset-failed "$unit" >/dev/null 2>&1 || true
