@@ -6,7 +6,7 @@
 - 网络设置页（8001，热点配网 + 连服务器的 SSH 隧道）
 - 网页终端 ttyd（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，版本钉在 ``CODE_SERVER_VERSION``）
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
-- 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：按 ``env/pyproject.toml`` 重写，自己用 ``uv add`` 加的包与源保留
+- 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：按 ``board_env/pyproject.toml`` 重写，自己用 ``uv add`` 加的包与源保留
 
 第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变，
 在跑的服务有改动才重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
@@ -134,7 +134,7 @@ def render_env_pyproject(template: str, old: str | None) -> str:
 def sync_env() -> None:
     dest = ENV_DIR / "pyproject.toml"
     old = dest.read_text() if dest.exists() else None
-    new = render_env_pyproject((BOARD / "env/pyproject.toml").read_text(), old)
+    new = render_env_pyproject((BOARD / "board_env/pyproject.toml").read_text(), old)
     if old == new:
         say("LeRobot 环境：pyproject 已是最新")
         return

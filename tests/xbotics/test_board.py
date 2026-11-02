@@ -45,7 +45,7 @@ def provision(tunnel):
     return mod
 
 
-TEMPLATE = (BOARD / "env/pyproject.toml").read_text()
+TEMPLATE = (BOARD / "board_env/pyproject.toml").read_text()
 
 
 def test_every_packaged_file_exists():
@@ -205,3 +205,21 @@ def test_probe_tells_service_no_service_and_no_listener(provision):
 def test_bootstrap_and_config_scripts_are_executable():
     for rel in ("bootstrap.sh", "config/xbotics-config"):
         assert Path(BOARD / rel).stat().st_mode & 0o111, rel
+
+
+def test_every_board_file_is_tracked_by_git():
+    """板子靠从 GitHub 装的包拿这些文件：工作区里有、git 里没有（比如被 .gitignore 的 env/ 挡掉）的，板子上就缺。"""
+    import subprocess
+
+    repo = BOARD.parents[3]
+    if not (repo / ".git").exists():
+        pytest.skip("不在 git 检出里")
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files", str(BOARD)], cwd=repo, capture_output=True, text=True
+        ).stdout.split()
+    )
+    files = {
+        str(p.relative_to(repo)) for p in BOARD.rglob("*") if p.is_file() and "__pycache__" not in p.parts
+    }
+    assert files - tracked == set()

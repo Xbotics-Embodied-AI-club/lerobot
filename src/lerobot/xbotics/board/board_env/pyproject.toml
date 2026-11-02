@@ -1,0 +1,19 @@
+# 星禾套件板子上的 LeRobot 环境（/root/xbotics），由维护版 LeRobot 维护：xbotics-config update 升级时按新版重写。
+# 自己用 uv add 加的包会保留下来。
+[project]
+name = "xbotics-board"
+version = "0.0.0"
+requires-python = "==3.12.*"
+dependencies = ["lerobot[feetech,async,dataset,viz,xbotics_tools]", "jupyterlab"]
+
+[tool.uv]
+package = false
+override-dependencies = [
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "torchcodec; sys_platform == 'never'",
+    "rerun-sdk==0.26.2",
+]
+
+[tool.uv.sources]
+lerobot = { git = "https://github.com/Xbotics-Embodied-AI-club/lerobot.git", tag = "xbotics-v0.6.1" }

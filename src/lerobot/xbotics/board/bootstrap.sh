@@ -15,7 +15,7 @@ if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 mkdir -p /root/xbotics && cd /root/xbotics
-[[ -f pyproject.toml ]] || curl -fsSL "$RAW/env/pyproject.toml" -o pyproject.toml
+[[ -f pyproject.toml ]] || curl -fsSL "$RAW/board_env/pyproject.toml" -o pyproject.toml
 if [[ -n "${XBOTICS_REF:-}" ]]; then
   case "$REF" in xbotics-v*) kind=tag ;; *) kind=branch ;; esac
   sed -i -E "s#^lerobot = \{ git = \"([^\"]+)\", (tag|branch|rev) = \"[^\"]*\" \}#lerobot = { git = \"\1\", $kind = \"$REF\" }#" pyproject.toml
