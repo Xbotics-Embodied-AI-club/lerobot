@@ -8,8 +8,8 @@
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
 - 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：按 ``board_env/pyproject.toml`` 重写，自己用 ``uv add`` 加的包与源保留
 
-第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变，
-在跑的服务有改动才重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
+第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变。
+在跑的服务有改动（跑 LeRobot 代码的那几个：LeRobot 升级了）就重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
 重启它们不会把升级本身掐断。密码（JupyterLab、VS Code）已经设过的不覆盖。
 
     python -m lerobot.xbotics.board install
@@ -287,19 +287,21 @@ def install() -> None:
         run("systemctl", "set-default", "multi-user.target")
         say("开机不进桌面（重启后生效）")
 
-    for unit in ("xbotics-maxfreq", "xbotics-provision"):  # 这两个一直开着
+    # 先记下哪些在跑：在跑的有改动（或跑的是 LeRobot 代码）就重启；照旧手册手工装过的板子没有 MARKER、
+    # 按第一次装处理，它上面早就在跑的服务同样要重启才用上新版
+    always_on = ("xbotics-maxfreq", "xbotics-provision")
+    running = {u for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel") if is_active(u)}
+    to_restart = [
+        u
+        for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel")
+        if u in running and (u in changed_units or u in LEROBOT_SERVICES)
+    ]
+    for unit in always_on:
         run("systemctl", "enable", "--now", unit, capture_output=True)
-    to_restart = [u for u in ("xbotics-maxfreq", "xbotics-provision") if u in changed_units and not first]
     if first:
         for unit in WEB_SERVICES:
             run("systemctl", "enable", "--now", unit, capture_output=True)
         say("已打开五个网页服务（8002–8006），之后用 xbotics-config 开关")
-    else:
-        to_restart += [
-            u for u in WEB_SERVICES if is_active(u) and (u in changed_units or u in LEROBOT_SERVICES)
-        ]
-    if "xbotics-tunnel" in changed_units and is_active("xbotics-tunnel"):
-        to_restart.append("xbotics-tunnel")
 
     MARKER.parent.mkdir(parents=True, exist_ok=True)
     MARKER.write_text("installed by lerobot.xbotics.board\n")
