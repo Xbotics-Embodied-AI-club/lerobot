@@ -130,7 +130,6 @@ tensorboard --logdir outputs/train --bind_all                     # 同时看所
 - `lerobot-train --gradient_accumulation_steps=N`：照上游 main 的语义，`steps` / `log_freq` / `save_freq` / 学习率调度都按小批计。
 - 多卡用 `accelerate launch --multi_gpu`（DDP）。不要用 FSDP：Muon 要整块矩阵做正交化，FSDP 切碎的参数算不对。
 - RoboTwin 2.0 clean 数据的转换（口径照官方训练用的那套）与留出集动作误差：`examples/lingbot_vla_v2_robotwin/`。
-  完整步骤见飞书《LingBot-VLA 2.0 在 RoboTwin 2.0 上微调（4 卡 H200）》。
 
 ```toml
 # uv 项目里装：多加 lingbot_vla_v2 组

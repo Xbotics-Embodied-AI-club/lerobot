@@ -214,8 +214,8 @@ def test_parse_tunnel_validates_each_field(provision):
         ({**ok, "forwards": []}, "至少"),
         ({**ok, "forwards": [{"local": "8003", "remote": "1"}]}, "已被占用"),
         ({**ok, "forwards": [{"local": "x", "remote": "1"}]}, "数字"),
-        ({**ok, "auth": "key"}, "私钥没填"),
-        ({**ok, "auth": "key", "key": "ssh-ed25519 AAAA… 公钥"}, "不像私钥"),
+        ({**ok, "auth": "key"}, "请填写私钥"),
+        ({**ok, "auth": "key", "key": "ssh-ed25519 AAAA… 公钥"}, "不是私钥"),
     ]:
         with pytest.raises(ValueError, match=word):
             provision.parse_tunnel(bad, {})

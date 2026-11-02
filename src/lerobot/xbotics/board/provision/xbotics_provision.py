@@ -1,15 +1,15 @@
-"""星禾套件端侧板配网服务：板子开一个热点，电脑 / 手机连上后在浏览器里配 Wi-Fi 和网线，结果实时显示。
+"""星禾套件端侧板的网络设置页：热点配网，以及连服务器的 SSH 隧道。
 
-热点开在 wlan0 上另建的虚拟接口 ap0 上（AIC8800 支持热点与连 Wi-Fi 同时开、可在不同信道），
-所以板子去连 Wi-Fi 时热点不断，页面能一直显示连没连上、拿到什么地址。
-DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d 里一条 address=/#/ 让所有域名都指向板子，
-再关掉 ap0 的转发让热点设备上不了外网，连上热点的电脑 / 手机检测联网时就会弹出这个页面。
-同一个页面在局域网里也能打开（http://<板子地址>:8001/，80 端口也行）。只用系统 Python 标准库与 nmcli，以 root 运行。
+端侧板开启一个热点，电脑或手机连接后在浏览器中设置 Wi-Fi 与网线，结果实时显示。热点建在 wlan0 上另建的虚拟接口 ap0
+上（AIC8800 支持热点与 Wi-Fi 客户端同时工作、可在不同信道），因此端侧板连接 Wi-Fi 时热点不中断，页面可持续显示连接状态与获得的地址。
+DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d 中的 address=/#/ 让所有域名都解析到端侧板，
+再关闭 ap0 的转发使热点设备无法访问外网，连接热点的电脑或手机检测联网时即弹出本页面。
+局域网中也可打开同一页面（http://<端侧板地址>:8001/，或 80 端口）。只依赖系统 Python 标准库与 nmcli，以 root 运行。
 
-页面上另有「连服务器」一栏：填服务器地址、账号和密码（或私钥），板子用 SSH 隧道把服务器上的推理服务、
-TensorBoard 等端口映射到自己的 0.0.0.0，隧道本身见同目录的 xbotics_tunnel.py。
+页面另有「连接服务器」一栏：填写服务器地址、账号与密码（或私钥），端侧板通过 SSH 隧道将服务器上的推理服务、
+TensorBoard 等端口映射到自身的 0.0.0.0，隧道实现见同目录的 xbotics_tunnel.py。
 
-只在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测过；
+已在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测；
 随维护版 LeRobot 安装与升级（python -m lerobot.xbotics.board install），见 XBOTICS.md。
 """
 
@@ -24,19 +24,19 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# 板子上用系统 Python 直接跑这个文件（不进 LeRobot 环境）：同目录的隧道模块按文件路径导入
+# 端侧板上由系统 Python 直接运行本文件（不进入 LeRobot 环境），同目录的隧道模块按文件路径导入
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xbotics_tunnel as tunnel  # noqa: E402
 
 AP_IFACE, STA_IFACE, ETH_IFACE = "ap0", "wlan0", "eth0"
 AP_CON = "xbotics-ap"
-TRIAL_CON = "xbotics-try"  # 试连新 Wi-Fi 时的临时配置名，成了再改成网络名
+TRIAL_CON = "xbotics-try"  # 试连新 Wi-Fi 时的临时配置名，连接成功后改为网络名
 AP_ADDR = "10.42.0.1"
-# 套件的四个网页服务用连号端口，好记：8001 配网页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code。
-# 80 也开着同一个页面：连上热点的电脑 / 手机检测联网只打 80，弹页要靠它；`http://10.42.0.1` 不写端口也能开。
+# 端侧板上的网页服务端口连号（8001–8006），本页在 8001。
+# 80 端口提供同一页面：连接热点的设备检测联网只访问 80，弹出本页依赖它；`http://10.42.0.1` 不带端口也可打开。
 PORTS = (80, 8001)
 PAGE = (Path(__file__).resolve().parent / "index.html").read_bytes()
-# 用来判断「能不能上外网」：两个公共 DNS 的 53 端口，任一连得上就算通
+# 判断能否访问外网：连接两个公共 DNS 的 53 端口，任一可连即视为可访问
 ONLINE_PROBES = (("223.5.5.5", 53), ("1.1.1.1", 53))
 
 
@@ -46,7 +46,7 @@ def nmcli(*args: str, timeout: float = 60) -> tuple[int, str, str]:
 
 
 def split_terse(line: str) -> list[str]:
-    """nmcli -t 的一行按没转义的冒号切开（SSID 里的冒号会写成 \\:）。"""
+    """按未转义的冒号切分 nmcli -t 的一行输出（SSID 中的冒号写作 \\:）。"""
     fields, cur, escaped = [], [], False
     for ch in line:
         if escaped:
@@ -69,7 +69,7 @@ def ap_ssid() -> str:
 
 
 def ensure_hotspot() -> None:
-    """建虚拟接口 ap0、建（或更新）热点连接并打开；不让热点设备经板子上外网。"""
+    """建立虚拟接口 ap0，建立（或更新）并开启热点连接；热点设备不经端侧板访问外网。"""
     if not Path(f"/sys/class/net/{AP_IFACE}").exists():
         subprocess.run(
             ["iw", "dev", STA_IFACE, "interface", "add", AP_IFACE, "type", "__ap"],
@@ -93,10 +93,10 @@ def ensure_hotspot() -> None:
         nmcli("connection", "modify", AP_CON, *settings)
     code, _, err = nmcli("connection", "up", AP_CON)
     if code != 0:
-        raise RuntimeError(f"热点没开起来：{err}")
-    # 热点设备只给配网页用：关掉 ap0 的转发，它们上不了外网、检测联网失败才会弹出配网页。
-    # 共享模式激活时会把全局转发打开，所以要在 connection up 之后关。板子上没装 iptables / nft，
-    # 这里只写内核开关，不依赖它们
+        raise RuntimeError(f"热点未能开启：{err}")
+    # 热点仅供网络设置页使用：关闭 ap0 的转发，热点设备无法访问外网，检测联网失败后才会弹出本页。
+    # 共享模式激活时会开启全局转发，因此须在 connection up 之后关闭。端侧板上未安装 iptables / nft，
+    # 此处只写内核开关，不依赖它们
     Path(f"/proc/sys/net/ipv4/conf/{AP_IFACE}/forwarding").write_text("0\n")
 
 
@@ -137,7 +137,7 @@ def online_via(iface: str) -> bool:
 
 
 def eth_connection() -> str | None:
-    """网线用的那条连接配置：正在 eth0 上用的优先，否则第一条有线配置。"""
+    """网线使用的连接配置：优先取 eth0 上正在使用的，否则取第一条有线配置。"""
     _, out, _ = nmcli("-t", "-f", "NAME,TYPE,DEVICE", "connection", "show")
     rows = [split_terse(line) for line in out.splitlines() if line]
     wired = [r for r in rows if len(r) == 3 and r[1] == "802-3-ethernet"]
@@ -161,12 +161,12 @@ def saved_wifi() -> list[str]:
 
 
 class Status:
-    """后台每 3 秒刷一次状态（查外网要几秒），页面轮询时直接读缓存。"""
+    """后台每 3 秒刷新一次状态（检测外网需要数秒），页面轮询时直接读取缓存。"""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.data: dict = {}
-        # at：这条消息的时刻，页面凭它认出「用户已经点掉的那一条」
+        # at：这条消息的时间戳，页面据此识别用户已关闭的那一条
         self.job: dict = {"kind": "", "state": "idle", "message": "", "at": 0.0}
 
     def refresh(self) -> None:
@@ -190,7 +190,7 @@ class Status:
         while True:
             try:
                 self.refresh()
-            except Exception as e:  # noqa: BLE001 —— 刷新失败不能让整个服务退出，记下来下一轮再试
+            except Exception as e:  # noqa: BLE001 —— 刷新失败不应使整个服务退出，记录后下一轮重试
                 print("状态刷新失败：", e, flush=True)
             time.sleep(3)
 
@@ -229,20 +229,21 @@ def scan_networks() -> list[dict]:
 
 def explain(err: str) -> str:
     if "Secrets were required" in err or "802-1x" in err.lower():
-        return "密码不对，或这个网络要账号登录"
+        return "密码错误，或该网络需要账号登录"
     if "No network with SSID" in err:
-        return "没找到这个网络，靠近一点再扫一次"
+        return "未找到该网络，请靠近路由器后重新扫描"
     return err or "连接失败"
 
 
 def connect_wifi(ssid: str, password: str) -> None:
-    """先用临时名字试连，成了再顶替同名的旧配置；没成就删掉临时的、换回旧的。
+    """先以临时名称试连，成功后替换同名的旧配置；失败则删除临时配置并恢复旧配置。
 
-    两个坑（NetworkManager 1.36 实测）：连接失败时 nmcli 照样退出码 0，成败只能看 wlan0 实际连上了哪条；
-    对已保存的网络直接 `device wifi connect … password` 会把旧配置的密码改掉，输错一次原来能用的也坏了。
+    这样做针对 NetworkManager 1.36 的两处行为（实测）：连接失败时 nmcli 仍返回 0，成败只能看 wlan0
+    实际连接的是哪条配置；对已保存的网络直接 `device wifi connect … password` 会改写旧配置的密码，
+    输错一次就会让原本可用的配置失效。
     """
     existed = ssid in saved_wifi()
-    nmcli("connection", "delete", "id", TRIAL_CON)  # 上次没收拾干净的
+    nmcli("connection", "delete", "id", TRIAL_CON)  # 清理上次残留的临时配置
     args = [
         "--wait",
         "45",
@@ -264,41 +265,41 @@ def connect_wifi(ssid: str, password: str) -> None:
         nmcli("connection", "delete", "id", TRIAL_CON)
         if existed:
             nmcli("--wait", "30", "connection", "up", "id", ssid)
-        STATUS.set_job("wifi", "failed", f"连 {ssid} 失败：{explain(out + err)}")
+        STATUS.set_job("wifi", "failed", f"连接 {ssid} 失败：{explain(out + err)}")
         return
     if existed:
         nmcli("connection", "delete", "id", ssid)
     nmcli("connection", "modify", TRIAL_CON, "connection.id", ssid)
     time.sleep(2)
     addrs = device_info(STA_IFACE)["addresses"]
-    STATUS.set_job("wifi", "done", f"已连上 {ssid}，地址 {', '.join(addrs) or '还在获取'}")
+    STATUS.set_job("wifi", "done", f"已连接 {ssid}，地址 {', '.join(addrs) or '正在获取'}")
 
 
 def parse_wired(cfg: dict) -> tuple[str, str, list[str]]:
-    """把页面上填的固定 IP 校验成 nmcli 要的写法；哪一格不对，报错里就点名哪一格。"""
+    """把页面上填写的固定 IP 校验成 nmcli 的写法；哪一项有误，报错就指明哪一项。"""
 
     def ipv4(label: str, text: object) -> str:
         try:
             return str(ipaddress.IPv4Address(str(text).strip()))
         except ValueError:
-            raise ValueError(f"{label}「{text}」不是 IPv4 地址，应当像 192.168.1.50 这样") from None
+            raise ValueError(f"{label}「{text}」不是有效的 IPv4 地址，格式如 192.168.1.50") from None
 
     address = ipv4("地址", cfg.get("address", ""))
     prefix = str(cfg.get("prefix", "")).strip()
     if not prefix.isdigit() or not 1 <= int(prefix) <= 32:
-        raise ValueError(f"前缀长度「{prefix}」应当是 1 到 32 的数字，一般的家用 / 办公网是 24")
+        raise ValueError(f"前缀长度「{prefix}」应为 1 到 32 之间的整数，家用与办公网络通常为 24")
     gateway = ipv4("网关", cfg.get("gateway", ""))
     dns = [ipv4("DNS", d) for d in cfg.get("dns", []) if str(d).strip()]
     network = ipaddress.IPv4Interface(f"{address}/{prefix}").network
     if ipaddress.IPv4Address(gateway) not in network:
-        raise ValueError(f"网关 {gateway} 不在 {network} 这个网段里，地址和网关要在同一个网段")
+        raise ValueError(f"网关 {gateway} 不在 {network} 网段内，地址与网关须在同一网段")
     return f"{address}/{prefix}", gateway, dns
 
 
 def apply_wired(cfg: dict) -> None:
     name = eth_connection()
     if not name:
-        STATUS.set_job("wired", "failed", "板子上没有网线的连接配置")
+        STATUS.set_job("wired", "failed", "端侧板上没有有线网络的连接配置")
         return
     if cfg.get("mode") == "auto":
         args = ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
@@ -317,16 +318,16 @@ def apply_wired(cfg: dict) -> None:
     STATUS.set_job("wired", "running", "正在应用网线设置…")
     code, _, err = nmcli("connection", "modify", name, *args)
     if code != 0:
-        STATUS.set_job("wired", "failed", f"网线设置没存上：{err}")
+        STATUS.set_job("wired", "failed", f"网线设置保存失败：{err}")
         return
-    # 和连 Wi-Fi 一样，nmcli 失败也可能退出码 0：成败看 eth0 实际状态
+    # 与连接 Wi-Fi 相同，nmcli 失败时也可能返回 0，成败以 eth0 的实际状态为准
     _, out, err = nmcli("--wait", "30", "connection", "up", name)
     time.sleep(2)
     info = device_info(ETH_IFACE)
     if not (info["connected"] and info["connection"] == name):
-        STATUS.set_job("wired", "failed", f"网线设置已存，但没连上：{(out + err).strip()}")
+        STATUS.set_job("wired", "failed", f"网线设置已保存，但未能连接：{(out + err).strip()}")
         return
-    STATUS.set_job("wired", "done", f"网线已应用，地址 {', '.join(info['addresses']) or '还在获取'}")
+    STATUS.set_job("wired", "done", f"网线设置已生效，地址 {', '.join(info['addresses']) or '正在获取'}")
 
 
 def systemctl(*args: str) -> tuple[int, str]:
@@ -334,45 +335,45 @@ def systemctl(*args: str) -> tuple[int, str]:
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
-# ssh 的英文报错 → 给人看的话。同一次失败会打出好几行（口令错了之后还跟着一行 Permission denied），
-# 所以按这里的先后取：越具体的越靠前
+# ssh 的英文报错与对应的中文说明。同一次失败会输出多行（口令错误之后还会有一行 Permission denied），
+# 因此按此处的先后顺序匹配，越具体的越靠前
 TUNNEL_ERRORS = (
-    ("incorrect passphrase", "私钥的口令不对，改好后点「保存并连接」"),
-    ("invalid format", "私钥格式不对：要粘贴整段私钥，从 -----BEGIN 那一行到 -----END 那一行"),
-    ("Permission denied", "登录被拒：账号、密码或私钥不对，改好后点「保存并连接」"),
-    ("Could not resolve hostname", "找不到这个服务器地址，检查一下拼写"),
-    ("Connection refused", "服务器拒绝连接：SSH 端口不对，或服务器没开 SSH"),
-    ("Connection timed out", "连不上服务器：地址不对，或板子的网络到不了它"),
-    ("No route to host", "连不上服务器：板子的网络到不了它"),
-    ("Network is unreachable", "板子还没联网：先在上面连好 Wi-Fi 或网线"),
-    ("cannot listen to port", "板子上的端口已被别的程序占用，换一个板子端口"),
-    ("Address already in use", "板子上的端口已被别的程序占用，换一个板子端口"),
+    ("incorrect passphrase", "私钥口令不对，请修改后点击「保存并连接」"),
+    ("invalid format", "私钥格式不对：请粘贴完整私钥，从 -----BEGIN 行到 -----END 行"),
+    ("Permission denied", "登录被拒：账号、密码或私钥不正确，请修改后点击「保存并连接」"),
+    ("Could not resolve hostname", "找不到该服务器地址，请检查拼写"),
+    ("Connection refused", "服务器拒绝连接：SSH 端口不正确，或服务器未开启 SSH 服务"),
+    ("Connection timed out", "连不上服务器：地址不正确，或端侧板所在网络无法访问该服务器"),
+    ("No route to host", "连不上服务器：端侧板所在网络无法访问该服务器"),
+    ("Network is unreachable", "端侧板尚未联网：请先在上方连接 Wi-Fi 或网线"),
+    ("cannot listen to port", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
+    ("Address already in use", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
     (
         "REMOTE HOST IDENTIFICATION HAS CHANGED",
-        "服务器的指纹变了（重装过系统？）：再点一次「保存并连接」会重新认它",
+        "服务器指纹已变化（可能重装过系统）：再次点击「保存并连接」即可重新识别",
     ),
     (
         "Host key verification failed",
-        "服务器的指纹变了（重装过系统？）：再点一次「保存并连接」会重新认它",
+        "服务器指纹已变化（可能重装过系统）：再次点击「保存并连接」即可重新识别",
     ),
     (
         "administratively prohibited",
-        "服务器不允许端口转发：在服务器的 sshd_config 里设 AllowTcpForwarding yes",
+        "服务器不允许端口转发：请在服务器的 sshd_config 中设置 AllowTcpForwarding yes",
     ),
 )
 
 
 def tunnel_error() -> str:
-    """最近一两次启动里 ssh 报的错误，翻成白话；没错误就是空串。"""
+    """最近一两次启动中 ssh 报告的错误，转成中文说明；没有错误时返回空串。"""
     proc = subprocess.run(
         ["journalctl", "-u", tunnel.UNIT, "-n", "40", "-o", "cat", "--no-pager"],
         capture_output=True, text=True, timeout=10, check=False,
     )  # fmt: skip
     lines = proc.stdout.splitlines()
     starts = [i for i, line in enumerate(lines) if line.startswith("隧道：")]
-    # 只看最近两次启动的输出：上一次失败的原因，与这一次的（重连中）
+    # 只看最近两次启动的输出：上一次失败的原因，以及本次（重连中）的输出
     recent = lines[starts[-2] if len(starts) > 1 else 0 :]
-    # 「channel N: open failed」是某一路转发在服务器那头没服务，不是隧道本身的错，页面在映射清单里单独标
+    # 「channel N: open failed」表示某一路转发在服务器端无服务，不属于隧道本身的错误，页面在映射列表中单独标示
     recent = [line for line in recent if not line.startswith("channel ")]
     for needle, text in TUNNEL_ERRORS:
         if any(needle in line for line in recent):
@@ -381,11 +382,11 @@ def tunnel_error() -> str:
 
 
 def probe_forward(port: int) -> str:
-    """经隧道连一次板子上的这个端口，什么都不发。
+    """经隧道连接一次端侧板上的该端口，不发送任何数据。
 
-    ok = 服务器那头有服务（连接一直开着，等我们先说话；或者它先发了数据）；closed = 连上就被断开
-    （ssh 在服务器那头连不上这个端口，就把板子这头的连接关掉）；down = 板子上没在监听（隧道没起来）。
-    不发数据：gRPC 这类协议收到不认得的数据会直接断开，发了就和「没服务」分不开了。
+    ok = 服务器端有服务（连接保持打开、等待客户端先发送，或服务先发来数据）；closed = 连接后立即被断开
+    （ssh 在服务器端连不上该端口，随即关闭端侧板这一侧的连接）；down = 端侧板上没有监听（隧道未建立）。
+    不发送数据，是因为 gRPC 这类协议收到无法识别的数据会直接断开，发送后就无法与「无服务」区分。
     """
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
@@ -401,7 +402,7 @@ def probe_forward(port: int) -> str:
 
 
 class Tunnel:
-    """连服务器的隧道：设置、状态。状态里的端口探测每 15 秒一次（每探一次服务器上就多一条连接记录）。"""
+    """连接服务器的隧道：设置与状态。端口探测每 15 秒一次（每次探测都会在服务器上留下一条连接记录）。"""
 
     def __init__(self) -> None:
         self.probes: dict[int, str] = {}
@@ -437,32 +438,32 @@ TUNNEL = Tunnel()
 
 
 def parse_tunnel(body: dict, old: dict) -> dict:
-    """把页面上填的隧道设置校验成配置；哪一格不对，报错里就点名哪一格。没重填的密码 / 私钥沿用旧的。"""
+    """把页面上填写的隧道设置校验成配置；哪一项有误，报错就指明哪一项。未重新填写的密码与私钥沿用原值。"""
     host = str(body.get("host", "")).strip()
     user = str(body.get("user", "")).strip()
     if not host:
-        raise ValueError("服务器地址没填")
+        raise ValueError("请填写服务器地址")
     if not user:
-        raise ValueError("账号没填")
+        raise ValueError("请填写账号")
     port = str(body.get("port") or 22).strip()
     if not port.isdigit() or not 1 <= int(port) <= 65535:
-        raise ValueError(f"SSH 端口「{port}」应当是 1 到 65535 的数字，一般是 22")
+        raise ValueError(f"SSH 端口「{port}」应为 1 到 65535 之间的整数，通常为 22")
     auth = "key" if body.get("auth") == "key" else "password"
     same_login = old.get("host") == host and old.get("user") == user
     cfg = {"host": host, "port": int(port), "user": user, "auth": auth}
     if auth == "password":
         password = body.get("password") or (old.get("password") if same_login else "")
         if not password:
-            raise ValueError("密码没填")
+            raise ValueError("请填写密码")
         cfg["password"] = password
     else:
         key = str(body.get("key") or "").strip()
         if key and "PRIVATE KEY" not in key:
             raise ValueError(
-                "这不像私钥：要粘贴整段私钥，从 -----BEGIN … PRIVATE KEY----- 到 -----END … PRIVATE KEY-----"
+                "这不是私钥：请粘贴完整私钥，从 -----BEGIN … PRIVATE KEY----- 到 -----END … PRIVATE KEY-----"
             )
         if not key and not (same_login and tunnel.KEY_FILE.exists()):
-            raise ValueError("私钥没填")
+            raise ValueError("请填写私钥")
         if key:
             cfg["_key"] = key + "\n"
         cfg["passphrase"] = body.get("passphrase") or (
@@ -473,25 +474,25 @@ def parse_tunnel(body: dict, old: dict) -> dict:
         try:
             local, remote = int(f.get("local")), int(f.get("remote") or f.get("local"))
         except (TypeError, ValueError):
-            raise ValueError(f"第 {i} 条映射的端口要填数字") from None
+            raise ValueError(f"第 {i} 条映射的端口须为数字") from None
         if not (1024 <= local <= 65535 and 1 <= remote <= 65535):
-            raise ValueError(f"第 {i} 条映射：板子端口要在 1024–65535，服务器端口要在 1–65535")
+            raise ValueError(f"第 {i} 条映射：端侧板端口须在 1024–65535 之间，服务器端口须在 1–65535 之间")
         if local in seen or local in PORTS or 8001 <= local <= 8007 or local in (9090, 9091):
             raise ValueError(
-                f"第 {i} 条映射：板子端口 {local} 已被占用（8001–8007 是板子自己的网页，9090、9091 是录数据的预览）"
+                f"第 {i} 条映射：端侧板端口 {local} 已被占用（8001–8007 为端侧板自带的网页，9090、9091 为录数据预览）"
             )
         seen.add(local)
         remote_host = str(f.get("remote_host") or "127.0.0.1").strip()
         forwards.append({"name": str(f.get("name") or f"端口 {local}").strip(), "local": local,
                          "remote_host": remote_host, "remote": remote, "web": f.get("web") is not False})  # fmt: skip
     if not forwards:
-        raise ValueError("至少要映射一个端口")
+        raise ValueError("至少需要映射一个端口")
     cfg["forwards"] = forwards
     return cfg
 
 
 def write_private(path: Path, text: str) -> None:
-    """只有 root 能读的文件：一创建就是 0600，中间没有别人能读的窗口。"""
+    """写入仅 root 可读的文件：创建时即为 0600，不存在其他用户可读的时间窗口。"""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(text)
@@ -510,28 +511,28 @@ def save_tunnel(body: dict) -> None:
     key = cfg.pop("_key", None)
     if key:
         write_private(tunnel.KEY_FILE, key)
-    # 每次保存都重新认服务器的指纹：换了服务器、服务器重装过系统，点一次「保存并连接」就能连上
+    # 每次保存都重新识别服务器指纹：更换服务器或服务器重装系统后，点击一次「保存并连接」即可连接
     tunnel.KNOWN_HOSTS.unlink(missing_ok=True)
     write_private(tunnel.CONFIG, json.dumps(cfg, ensure_ascii=False, indent=2))
     systemctl("enable", tunnel.UNIT)
     code, out = systemctl("restart", tunnel.UNIT)
     if code != 0:
-        STATUS.set_job("tunnel", "failed", f"隧道服务没起来：{out}")
+        STATUS.set_job("tunnel", "failed", f"隧道服务未能启动：{out}")
         return
     TUNNEL.probed_at = 0.0
-    # 登录加建立转发一般两三秒；等到端口在板子上听起来，或等满 15 秒看报错
+    # 登录与建立转发通常需要两三秒；等待端侧板上的端口开始监听，最多 15 秒，超时则读取报错
     for _ in range(15):
         time.sleep(1)
         if all(probe_forward(f["local"]) != "down" for f in cfg["forwards"]):
             names = "、".join(f"{f['name']}（{f['local']}）" for f in cfg["forwards"])
-            STATUS.set_job("tunnel", "done", f"已连上 {cfg['host']}：{names} 已映射到板子")
+            STATUS.set_job("tunnel", "done", f"已连接 {cfg['host']}：{names} 已映射到端侧板")
             return
-    STATUS.set_job("tunnel", "failed", tunnel_error() or "隧道还没连上，稍等再看状态")
+    STATUS.set_job("tunnel", "failed", tunnel_error() or "隧道尚未连接，请稍后查看状态")
 
 
 def stop_tunnel() -> None:
     systemctl("disable", "--now", tunnel.UNIT)
-    STATUS.set_job("tunnel", "done", "已断开服务器，开机也不再自动连")
+    STATUS.set_job("tunnel", "done", "已断开与服务器的连接，开机不再自动连接")
 
 
 def in_background(fn, *args) -> None:
@@ -548,7 +549,7 @@ def board_hosts() -> set[str]:
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
-        """不逐条记请求：页面每 2 秒轮询一次状态，记下来会把日志刷满。"""
+        """不逐条记录请求：页面每 2 秒轮询一次状态，逐条记录会使日志过多。"""
         del format, args
 
     def send_json(self, obj, code: int = 200) -> None:
@@ -576,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(PAGE)
             return None
-        # 其他请求（系统检测联网、打开别的网站）一律跳到配网页，系统就会弹出它
+        # 其他请求（系统的联网检测、访问其他网站）一律重定向到本页，系统据此弹出网络设置页
         self.send_response(302)
         self.send_header("Location", f"http://{AP_ADDR}/")
         self.send_header("Content-Length", "0")
@@ -588,20 +589,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
-            return self.send_json({"error": "请求格式不对"}, 400)
+            return self.send_json({"error": "请求格式错误"}, 400)
         if STATUS.snapshot()["job"]["state"] == "running":
-            return self.send_json({"error": "上一个操作还没完成"}, 409)
-        # 给人看的结果一律走 STATUS.set_job：页面只从 /api/status 读消息，只有这一个出口
+            return self.send_json({"error": "上一个操作尚未完成"}, 409)
+        # 面向用户的结果一律经 STATUS.set_job 发布：页面只从 /api/status 读取消息，只有这一个出口
         if self.path == "/api/wifi":
             ssid = (body.get("ssid") or "").strip()
             if not ssid:
-                STATUS.set_job("wifi", "failed", "先在上面的列表里点一个 Wi-Fi，或者手动填名字")
+                STATUS.set_job("wifi", "failed", "请先在上方列表中选择一个 Wi-Fi，或手动填写名称")
             else:
                 in_background(connect_wifi, ssid, body.get("password") or "")
         elif self.path == "/api/wifi/forget":
             name = body.get("name") or ""
             code, _, err = nmcli("connection", "delete", "id", name)
-            STATUS.set_job("wifi", "done" if code == 0 else "failed", f"已删掉 {name}" if code == 0 else err)
+            STATUS.set_job("wifi", "done" if code == 0 else "failed", f"已删除 {name}" if code == 0 else err)
         elif self.path == "/api/wired":
             in_background(apply_wired, body)
         elif self.path == "/api/tunnel":
@@ -609,7 +610,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/tunnel/stop":
             in_background(stop_tunnel)
         else:
-            return self.send_json({"error": "没有这个接口"}, 404)
+            return self.send_json({"error": "接口不存在"}, 404)
         return self.send_json({"ok": True})
 
 

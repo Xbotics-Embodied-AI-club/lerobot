@@ -1,16 +1,18 @@
-"""把星禾套件板子装成（或升级成）当前维护版 LeRobot 对应的样子：板子上要维护的东西全在这个包里，升级 LeRobot 就升级全部。
+"""把星禾套件端侧板安装（或升级）为本版维护版 LeRobot 对应的状态。
 
-一次装下面这些，重复运行只改有变化的部分（以 root 在板子的 LeRobot 环境里跑）：
+端侧板上需要维护的内容全部在本包中，升级 LeRobot 即升级全部。一次安装下列各项，重复运行只修改有变化的部分
+（以 root 在端侧板的 LeRobot 环境中运行）：
 
-- 系统：开机不进桌面、CPU 与内存锁最高频、相机不自己降帧、机械臂与相机的固定设备名（udev）
+- 系统：开机不进入桌面、CPU 与内存锁定最高频率、相机不自动降帧、机械臂与相机的固定设备名（udev）
 - 网络设置页（8001，热点配网 + 连服务器的 SSH 隧道）
 - 网页终端 ttyd（8002）、JupyterLab（8003）、浏览器版 VS Code（8004，版本钉在 ``CODE_SERVER_VERSION``）
 - 网页硬件检测（8005）、网页标定（8006）与开关命令 ``xbotics-config``
-- 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：只改 ``board_env/pyproject.toml`` 管的几项，其余原样保留
+- 端侧板 LeRobot 环境 ``/root/xbotics`` 的 pyproject：只修改 ``board_env/pyproject.toml`` 所管理的几项，其余保持不变
 
-第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变。
-在跑的服务有改动就重启；跑 LeRobot 代码的那几个（JupyterLab、硬件检测、网页标定）在 LeRobot 换了版本时重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
-重启它们不会把升级本身掐断。密码（JupyterLab、VS Code）已经设过的不覆盖。
+首次安装开启 8002–8006 五个网页服务；之后再次安装（升级）保持 ``xbotics-config`` 中的开关不变。
+正在运行的服务有改动时重启；运行 LeRobot 代码的服务（JupyterLab、硬件检测、网页标定）在 LeRobot 版本变化时重启。
+重启延后 3 秒，并放在单独的 systemd 单元中执行：在网页终端或 VS Code 终端中升级时，重启这些服务不会中断升级本身。
+已经设置过的密码（JupyterLab、VS Code）不会被覆盖。
 
     python -m lerobot.xbotics.board install
 """
@@ -27,14 +29,14 @@ BOARD = Path(__file__).resolve().parent
 ROOT_HOME = Path("/root")
 ENV_DIR = ROOT_HOME / "xbotics"
 UV = ROOT_HOME / ".local/bin/uv"
-MARKER = Path("/etc/xbotics/installed")  # 第一次装完写下（内容是当时装的 LeRobot 版本）；有它就是升级
-DEFAULT_PASSWORD = "123456"  # 与板子 root 密码相同：网页终端、JupyterLab、VS Code 只记一个
+MARKER = Path("/etc/xbotics/installed")  # 首次安装后写入（内容为当时安装的 LeRobot 版本）；存在即视为升级
+DEFAULT_PASSWORD = "123456"  # 与端侧板 root 密码相同：网页终端、JupyterLab、VS Code 共用一个密码
 CODE_SERVER_VERSION = "4.141.0"
 CODE_SERVER_EXTENSIONS = ("ms-python.python", "detachhead.basedpyright", "tamasfe.even-better-toml")
 APT_PACKAGES = ("ttyd", "iw", "whiptail")
 SYSTEMD = Path("/etc/systemd/system")
 
-# (包里的文件, 装到哪, 权限, 用到它的 systemd 单元)
+# (包内文件, 安装位置, 权限, 使用它的 systemd 单元)
 FILES = [
     ("udev/99-xbotics-rk3566.rules", "/etc/udev/rules.d/99-xbotics-rk3566.rules", 0o644, "udev"),
     ("udev/99-xbotics-camera-fps.rules", "/etc/udev/rules.d/99-xbotics-camera-fps.rules", 0o644, "udev"),
@@ -55,7 +57,7 @@ FILES = [
     ("vscode/settings.json", ROOT_HOME / ".local/share/code-server/User/settings.json", 0o644, "code-server@root"),
 ]  # fmt: skip
 
-# xbotics-config 管的五个网页服务：第一次装全开，之后保持用户的开关
+# xbotics-config 管理的五个网页服务：首次安装全部开启，之后保持用户的开关设置
 WEB_SERVICES = (
     "ttyd",
     "xbotics-jupyter",
@@ -63,7 +65,7 @@ WEB_SERVICES = (
     "xbotics-hardware-check",
     "xbotics-calibrate-web",
 )
-# 跑的是 LeRobot 环境里的代码：LeRobot 升级了它们就要重启才用上新版
+# 运行 LeRobot 环境中的代码：LeRobot 升级后须重启才能使用新版本
 LEROBOT_SERVICES = ("xbotics-jupyter", "xbotics-hardware-check", "xbotics-calibrate-web")
 
 
@@ -88,7 +90,7 @@ def write_if_changed(dest: Path, content: bytes, mode: int) -> bool:
     return True
 
 
-# ---------- 板子的 LeRobot 环境 ----------
+# ---------- 端侧板的 LeRobot 环境 ----------
 
 
 def req_name(req: str) -> str:
@@ -104,7 +106,7 @@ REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?(.*)$", r
 
 
 def merge_extras(template_req: str, old_req: str) -> str:
-    """模板的依赖写法为准，学员自己给它加的可选组（如 lerobot[...] 里多写的）并进来。"""
+    """以模板的依赖写法为准，并入学员为它添加的可选组（如 lerobot[...] 中额外写的）。"""
     t, o = REQ.match(template_req), REQ.match(old_req)
     if not (t and o and o.group(2)):
         return template_req
@@ -114,7 +116,10 @@ def merge_extras(template_req: str, old_req: str) -> str:
 
 
 def render_env_pyproject_plain(template: str, old: str) -> str:
-    """没有 tomlkit 时（还没装 xbotics_tools 组的老环境，只在第一次升级时走这里）：按模板整份重写，只带上旧的依赖与源。"""
+    """按模板整份重写，只带上旧文件里的依赖与源。
+
+    没有 tomlkit 时用：还没装 xbotics_tools 组的老环境，只在第一次升级时走这里，之后环境里就有 tomlkit 了。
+    """
     t, o = tomllib.loads(template), tomllib.loads(old)
     deps = t["project"]["dependencies"]
     names = {req_name(d) for d in deps}
@@ -133,11 +138,12 @@ def render_env_pyproject_plain(template: str, old: str) -> str:
 
 
 def render_env_pyproject(template: str, old: str | None) -> str:
-    """板子环境的 pyproject 升级：只改维护版管的几项，其余（学员 uv add 的包、源、索引、依赖组、注释）原样保留。
+    """升级端侧板环境的 pyproject：只修改维护版管理的几项，其余保持不变。
 
-    管的几项：Python 版本、模板里的依赖（学员给它们加的可选组保留）、override-dependencies、LeRobot 的源。
-    LeRobot 的源指到分支或提交（bootstrap.sh 用 XBOTICS_REF 装的测试板）时不动；是标签就换成模板的，
-    以后发新标签，升级就会换过去。上一版模板管、这一版删掉的依赖记在 [tool.xbotics]，升级时一并删掉。
+    保持不变的有学员用 uv add 添加的包、源、索引、依赖组和注释。管理的几项：Python 版本、模板中的依赖（保留学员为它们
+    添加的可选组）、override-dependencies、LeRobot 的源。LeRobot 的源指向分支或提交（用 bootstrap.sh 的 XBOTICS_REF
+    安装的测试板）时不修改；指向标签时替换为模板中的标签，发布新标签后升级即会切换。上一版模板管理、本版删除的依赖
+    记录在 [tool.xbotics] 中，升级时一并删除。
     """
     if old is None:
         return template
@@ -152,7 +158,7 @@ def render_env_pyproject(template: str, old: str | None) -> str:
     previously_managed = set(doc.get("tool", {}).get("xbotics", {}).get("managed-dependencies", []))
 
     def put(table, key: str, value) -> None:
-        """值不同才写：相同时保留文件里原来的排版（多行列表、空格），学员看着不乱。"""
+        """值不同时才写入：相同时保留文件原有的排版（多行列表、空格）。"""
         current = table.get(key)
         if getattr(current, "unwrap", lambda: current)() != value:
             table[key] = value
@@ -189,7 +195,7 @@ def sync_env() -> None:
         say("LeRobot 环境：pyproject 已是最新")
         return
     write_if_changed(dest, new.encode(), 0o644)
-    say("LeRobot 环境：pyproject 已按新版改写，重新同步依赖…")
+    say("LeRobot 环境：pyproject 已按新版更新，正在重新同步依赖…")
     run(str(UV), "sync", cwd=ENV_DIR, env={**os.environ, "HOME": str(ROOT_HOME)})
 
 
@@ -247,7 +253,7 @@ def code_server_config() -> bool:
 
 
 def code_server() -> bool:
-    """装（或换成）钉住的 code-server 版本，补齐插件；有改动返回 True。"""
+    """安装（或切换到）固定版本的 code-server，并补齐插件；有改动时返回 True。"""
     changed = False
     have = (
         run("code-server", "--version", check=False, capture_output=True).stdout
@@ -255,7 +261,7 @@ def code_server() -> bool:
         else ""
     )
     if not have.startswith(CODE_SERVER_VERSION):
-        say(f"浏览器版 VS Code：装 code-server {CODE_SERVER_VERSION}…")
+        say(f"浏览器版 VS Code：安装 code-server {CODE_SERVER_VERSION}…")
         script = run("curl", "-fsSL", "https://code-server.dev/install.sh", capture_output=True).stdout
         run(
             "sh",
@@ -270,7 +276,7 @@ def code_server() -> bool:
     installed = run("code-server", "--list-extensions", capture_output=True, check=False).stdout.split()
     for ext in CODE_SERVER_EXTENSIONS:
         if ext not in installed:
-            say(f"浏览器版 VS Code：装插件 {ext}")
+            say(f"浏览器版 VS Code：安装插件 {ext}")
             run("code-server", "--install-extension", ext, env={**os.environ, "HOME": str(ROOT_HOME)})
             changed = True
     return changed
@@ -282,7 +288,7 @@ def bashrc() -> None:
     text = path.read_text() if path.exists() else ""
     if line not in text.splitlines():
         path.write_text(text + ("" if text.endswith("\n") or not text else "\n") + line + "\n")
-        say("登录后自动进 LeRobot 环境")
+        say("已设置登录后自动进入 LeRobot 环境")
 
 
 # ---------- 主流程 ----------
@@ -293,13 +299,13 @@ def apt_install() -> None:
         p for p in APT_PACKAGES if run("dpkg", "-s", p, check=False, capture_output=True).returncode != 0
     ]
     if missing:
-        say(f"装系统包：{' '.join(missing)}")
+        say(f"安装系统包：{' '.join(missing)}")
         run("apt-get", "update")
         run("apt-get", "install", "-y", *missing, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
 
 
 def lerobot_version() -> str:
-    """装着的 LeRobot：从 git 装的取提交号，否则取版本号。"""
+    """已安装的 LeRobot 版本：从 git 安装的取提交号，否则取版本号。"""
     from importlib import metadata
 
     dist = metadata.distribution("lerobot")
@@ -316,7 +322,7 @@ def is_active(unit: str) -> bool:
 
 
 def plan_restarts(running: set[str], changed_units: set[str], lerobot_changed: bool) -> list[str]:
-    """在跑的服务里，哪些要重启：文件改了的；跑 LeRobot 代码的那几个在 LeRobot 换了版本时。"""
+    """正在运行的服务中需要重启的：文件有改动的，以及 LeRobot 版本变化时运行 LeRobot 代码的服务。"""
     units = ("xbotics-maxfreq", "xbotics-provision", *WEB_SERVICES, "xbotics-tunnel")
     return [
         u
@@ -328,14 +334,14 @@ def plan_restarts(running: set[str], changed_units: set[str], lerobot_changed: b
 def install() -> None:
     if os.geteuid() != 0:
         raise SystemExit(
-            "要用 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
+            "须以 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
         )
-    # 照旧手册手工装过的板子没有 MARKER，但已经有这些服务文件：按升级处理，不去动学员关掉的服务
+    # 按旧版手册手工安装的端侧板没有 MARKER，但已有这些服务文件：按升级处理，不改变学员关闭的服务
     legacy = any((SYSTEMD / f"{u}.service").exists() for u in ("xbotics-provision", "xbotics-hardware-check"))
     first = not MARKER.exists() and not legacy
     version = lerobot_version()
     lerobot_changed = not MARKER.exists() or MARKER.read_text().strip() != version
-    say("第一次安装" if first else "升级：保持现有的服务开关，有改动的服务才重启")
+    say("首次安装" if first else "升级：保持现有的服务开关，仅重启有改动的服务")
     apt_install()
     sync_env()
 
@@ -358,7 +364,7 @@ def install() -> None:
     run("systemctl", "daemon-reload")
     if systemctl("get-default").stdout.strip() != "multi-user.target":
         run("systemctl", "set-default", "multi-user.target")
-        say("开机不进桌面（重启后生效）")
+        say("已设置开机不进入桌面（重启后生效）")
 
     always_on = ("xbotics-maxfreq", "xbotics-provision")
     running = {u for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel") if is_active(u)}
@@ -368,12 +374,12 @@ def install() -> None:
     if first:
         for unit in WEB_SERVICES:
             run("systemctl", "enable", "--now", unit, capture_output=True)
-        say("已打开五个网页服务（8002–8006），之后用 xbotics-config 开关")
+        say("已开启五个网页服务（8002–8006），之后可用 xbotics-config 开关")
 
     MARKER.parent.mkdir(parents=True, exist_ok=True)
     MARKER.write_text(version + "\n")
     if to_restart:
-        # 放进单独的单元、延后 3 秒：从网页终端 / VS Code 终端里升级时，重启它们不会掐断本进程
+        # 放在单独的单元中、延后 3 秒执行：在网页终端或 VS Code 终端中升级时，重启这些服务不会中断本进程
         run(
             "systemd-run",
             "--on-active=3",
@@ -383,5 +389,5 @@ def install() -> None:
             *to_restart,
             capture_output=True,
         )
-        say(f"3 秒后重启：{' '.join(to_restart)}（从这些网页里看的话会断开一下，刷新即可）")
-    say("装好了：xbotics-config status 看各个服务")
+        say(f"3 秒后重启：{' '.join(to_restart)}（这些网页会短暂断开，刷新即可）")
+    say("安装完成：用 xbotics-config status 查看各服务状态")
