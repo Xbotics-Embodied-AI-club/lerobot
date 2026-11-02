@@ -1,6 +1,6 @@
 # 第 2 章 训练电脑
 
-训练、仿真评测与推理都在一台配有 NVIDIA 显卡的 x86 电脑上进行，操作系统为 Ubuntu。本章在这台电脑上安装 LeRobot 与 SO-101 仿真，使端侧板能够连接它，并打开训练曲线。
+训练、仿真评测与推理都在一台配有 NVIDIA 显卡的 x86 电脑上进行，操作系统为 Ubuntu。本章在这台电脑上安装 LeRobot 与 SO-101 仿真，使端侧计算平台能够连接它，并打开训练曲线。
 
 ## 2.1 显卡驱动
 
@@ -10,6 +10,7 @@ nvidia-smi
 
 能列出显卡，且右上角的 `CUDA Version` 不低于 12.8，即可继续。版本较低时，请先升级驱动。
 
+(train-env-setup)=
 ## 2.2 建立环境
 
 使用 uv 管理 Python 与依赖。先安装系统工具与 uv：
@@ -72,16 +73,16 @@ hf auth login
 ```
 
 (train-env-ssh)=
-## 2.5 允许端侧板连接这台电脑
+## 2.5 允许端侧计算平台连接这台电脑
 
-端侧板通过 SSH 连接这台电脑（[1.4 节](#connect-server)），因此需先安装 SSH 服务，并记下这台电脑的 IP。推理与训练分在两台电脑上时，两台都按本节设置：
+端侧计算平台通过 SSH 连接这台电脑（[3.2 节](#connect-server)），因此需先安装 SSH 服务，并记下这台电脑的 IP。推理与训练分在两台电脑上时，两台都按本节设置：
 
 ```bash
 sudo apt install -y openssh-server
 hostname -I
 ```
 
-`hostname -I` 输出的第一个地址，即端侧板网络设置页中「服务器地址」应填写的内容；账号与密码即你登录这台电脑所用的账号与密码。推理服务与 TensorBoard 默认只在本机监听，端侧板经 SSH 接入，电脑无需对外开放其他端口。
+`hostname -I` 输出的第一个地址，即端侧计算平台网络设置页中「服务器地址」应填写的内容；账号与密码即你登录这台电脑所用的账号与密码。推理服务与 TensorBoard 默认只在本机监听，端侧计算平台经 SSH 接入，电脑无需对外开放其他端口。
 
 ## 2.6 查看训练曲线
 
@@ -97,7 +98,7 @@ Watch this run --> tensorboard --logdir outputs/train/<本次训练>/tensorboard
 tensorboard --logdir outputs/train
 ```
 
-在浏览器中打开 `http://localhost:6006`，数秒内即可看到新的数据点，训练过程中即可查看。`--logdir` 指定上一级目录时，可同时比较多次训练。若要在端侧板一侧的电脑上查看，按 [1.4 节](#connect-server) 连接这台电脑后，打开 `http://<端侧板IP>:6006`。
+在浏览器中打开 `http://localhost:6006`，数秒内即可看到新的数据点，训练过程中即可查看。`--logdir` 指定上一级目录时，可同时比较多次训练。若要在其他电脑上查看，按 [3.2 节](#connect-server) 让端侧计算平台连接这台电脑后，打开 `http://<端侧IP>:6006`。
 
 ![训练曲线：损失、梯度、吞吐与显存](images/use-17-tensorboard.png)
 
@@ -116,7 +117,7 @@ tensorboard --logdir outputs/train
 (train-env-upgrade)=
 ## 2.7 升级
 
-端侧板升级时，这台电脑也需同步升级，保持同一版本：
+端侧计算平台升级时（[1.1 节](#board-upgrade)），这台电脑也需同步升级，保持同一版本：
 
 ```bash
 cd ~/xbotics && uv lock --upgrade-package lerobot && uv sync
