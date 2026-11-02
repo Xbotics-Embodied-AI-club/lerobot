@@ -1,95 +1,95 @@
-# Xbotics LeRobot：让 SO-101 自己完成任务
+# Xbotics LeRobot：让 SO-101 自主完成任务
 
 <video controls muted playsinline preload="metadata" poster="_static/poster/hook.jpg" src="_static/media/hook.mp4"></video>
 
-Xbotics 维护的 LeRobot 把具身智能的整条流程做成了开箱就能用的一套：在星禾套件上用主臂带着从臂示范动作、录成数据，在一台带 NVIDIA 显卡的电脑上训练模型，先在与真机对齐的 SO-101 仿真里评测，再让模型经网络控制真机。上面这段是走完流程后的样子：模型只看两路相机画面和关节读数，自己把方块放进料盒。
+Xbotics 维护的 LeRobot 把具身智能的完整流程整合为一套开箱即用的工具：在星禾套件上用主臂带动从臂示范动作并录制成数据，在一台配有 NVIDIA 显卡的电脑上训练模型，先在与真机对齐的 SO-101 仿真中评测，再由模型经网络控制真机。上面的视频展示了流程完成后的效果：模型仅依据两路相机画面与关节读数，自主将方块放入料盒。
 
-这个站点介绍它能做什么，并带你完成基础配置：板子连好网、连上训练电脑，两条机械臂标定好、主臂能带着从臂动。
+本站介绍它的能力，并指导你完成基础配置：端侧板联网并连接训练电脑，两条机械臂完成标定，主臂能够带动从臂运动。
 
-```{rubric} 用到的硬件
+```{rubric} 所需硬件
 ```
 
-| 部件 | 是什么 |
+| 部件 | 说明 |
 | --- | --- |
-| 主臂、从臂（星禾套件） | 一对 SO-101 机械臂：人握着主臂示范，从臂跟着做 |
-| 端侧板（星禾套件） | 瑞芯微 RK3566 板子，接两条臂和两路相机，负责录数据和执行动作 |
+| 主臂、从臂（星禾套件） | 一对 SO-101 机械臂：操作者握持主臂示范，从臂同步跟随 |
+| 端侧板（星禾套件） | 瑞芯微 RK3566 端侧板，连接两条机械臂与两路相机，负责录制数据与执行动作 |
 | 相机（星禾套件） | 顶视、腕部两路 USB 相机 |
-| 训练电脑 | 你自己的 x86 电脑，带 NVIDIA 显卡：训练、仿真评测、推理 |
+| 训练电脑 | 你自己的 x86 电脑，配 NVIDIA 显卡：用于训练、仿真评测与推理 |
 
-## 它能做什么
+## 能力展示
 
-### 看着画面，自己完成抓取
+### 依据画面自主完成抓取
 
-模型每次读两路相机画面和六个关节的读数，算出接下来一段动作；板子逐个执行，赶在这一段用完之前拿到下一段，机械臂一气呵成，每秒约 30 次动作。
+模型每次读取两路相机画面与六个关节的读数，计算出接下来的一段动作；端侧板逐一执行，并在当前一段用完之前获得下一段，机械臂动作连贯，每秒约 30 次动作。
 
 <video controls muted playsinline preload="metadata" poster="_static/poster/deploy.jpg" src="_static/media/deploy.mp4"></video>
 
 ### 仿真与真机对齐
 
-SO-101 仿真按真机搭建：机械臂的模型、相机的位置和视野、控制频率、关节的单位都与真机一致。下面是同一集录好的动作，左边灌给真机，右边灌给仿真：
+SO-101 仿真按真机搭建：机械臂模型、相机位置与视野、控制频率、关节单位均与真机一致。下面是同一集录制好的动作，左侧在真机上回放，右侧在仿真中回放：
 
 <div class="video-row">
 <video controls muted playsinline preload="metadata" poster="_static/poster/replay_real.jpg" src="_static/media/replay_real.mp4"></video>
 <video controls muted playsinline preload="metadata" poster="_static/poster/replay_sim.jpg" src="_static/media/replay_sim.mp4"></video>
 </div>
 
-所以仿真既能当评测环境，同样的条件跑几十局给出一个可比较的成功率；也能当一台机器人，没有机械臂时照样走通录数据和部署。我们发布的 ACT 模型用真机加仿真的数据训练，在 4 cm 方块场景跑 50 局，成功率 76%：
+因此，仿真既可作为评测环境，在相同条件下运行数十局，给出可比较的成功率；也可作为一台机器人使用，在没有机械臂时完整走通录制数据与部署。我们发布的 ACT 模型使用真机与仿真数据训练，在 4 cm 方块场景中运行 50 局，成功率为 76%：
 
 <video controls muted playsinline preload="metadata" poster="_static/poster/eval.jpg" src="_static/media/eval.mp4"></video>
 
-### 开源的数据和模型
+### 开源的数据与模型
 
-我们录制并开源了九个任务的 SO-101 真机数据：抓电池、易拉罐、方块、橡皮、高尔夫球、药瓶、毛绒玩具放进料盒，以及两个堆叠任务，共 2200 集、约 78 万帧，每集都带顶视和腕部两路画面。
+我们录制并开源了九个任务的 SO-101 真机数据：将电池、易拉罐、方块、橡皮、高尔夫球、药瓶、毛绒玩具放入料盒，以及两个堆叠任务，共 2200 集、约 78 万帧，每集均包含顶视与腕部两路画面。
 
 <video controls muted playsinline preload="metadata" poster="_static/poster/ds9.jpg" src="_static/media/ds9.mp4"></video>
 
-| 开源的 | 在哪 |
+| 开源内容 | 获取位置 |
 | --- | --- |
 | 九任务真机数据 | ModelScope [`zhuzhuangtian/so101-pick-place-tasks`](https://modelscope.cn/datasets/zhuzhuangtian/so101-pick-place-tasks) |
 | 仿真数据（4 cm 方块、2 cm 方块、4 cm 圆柱三个场景） | Hugging Face [`Harrysunshine/so101-sim-pickplace-v2`](https://huggingface.co/datasets/Harrysunshine/so101-sim-pickplace-v2) |
-| ACT 模型（真机 + 仿真数据，方块任务） | Hugging Face [`Harrysunshine/so101-act-sim-real-cube`](https://huggingface.co/Harrysunshine/so101-act-sim-real-cube) |
-| SmolVLA 模型（真机 + 仿真数据，十个任务，听语言指令） | Hugging Face [`Harrysunshine/so101-smolvla-sim-real-10task`](https://huggingface.co/Harrysunshine/so101-smolvla-sim-real-10task) |
+| ACT 模型（真机与仿真数据，方块任务） | Hugging Face [`Harrysunshine/so101-act-sim-real-cube`](https://huggingface.co/Harrysunshine/so101-act-sim-real-cube) |
+| SmolVLA 模型（真机与仿真数据，十个任务，接受语言指令） | Hugging Face [`Harrysunshine/so101-smolvla-sim-real-10task`](https://huggingface.co/Harrysunshine/so101-smolvla-sim-real-10task) |
 
-### 板子上只要一个浏览器
+### 端侧板只需一个浏览器
 
-端侧板不接显示器，所有操作都在浏览器里：连上板子的热点，网络设置页自动弹出；之后网页终端、浏览器版 VS Code、JupyterLab、硬件检测、网页标定都用一个网址打开，你的电脑上不用装任何软件。
-
-<div class="shot-grid">
-<figure><img src="_static/showcase/network-page.png" alt="网络设置页"><figcaption>网络设置：连 Wi-Fi、设网线，所有网页一处打开</figcaption></figure>
-<figure><img src="_static/showcase/use-12-hardware-check.png" alt="硬件检测"><figcaption>硬件检测：两路相机实时画面，一键读出每个舵机的状态</figcaption></figure>
-<figure><img src="_static/showcase/use-13-calibrate-web.png" alt="网页标定"><figcaption>网页标定：照着 3D 模型一个关节一个关节来</figcaption></figure>
-<figure><img src="_static/showcase/use-07-vscode-run.png" alt="浏览器版 VS Code"><figcaption>浏览器版 VS Code：看、改、运行板子上的代码</figcaption></figure>
-</div>
-
-### 连上训练电脑，一处填好
-
-推理服务和训练曲线都在训练电脑上。板子的网络设置页里填上电脑的地址、账号和密码（或私钥），板子就把电脑上的推理服务和 TensorBoard 接到自己身上：板子上的程序直接连本机，你在任何一台电脑上打开板子的地址就能看训练曲线。断网、重启后自己连回。
+端侧板不接显示器，所有操作都在浏览器中完成：连接端侧板的热点后，网络设置页自动弹出；此后网页终端、浏览器版 VS Code、JupyterLab、硬件检测与网页标定都通过网址打开，你的电脑上无需安装任何软件。
 
 <div class="shot-grid">
-<figure><img src="_static/showcase/connect-server.png" alt="连服务器"><figcaption>连服务器：每一路映射通没通，一眼看清</figcaption></figure>
-<figure><img src="_static/showcase/use-17-tensorboard.png" alt="TensorBoard"><figcaption>训练曲线：损失、梯度、吞吐和显存，边训边看</figcaption></figure>
+<figure><img src="_static/showcase/network-page.png" alt="网络设置页"><figcaption>网络设置：连接 Wi-Fi、设置网线，所有网页集中打开</figcaption></figure>
+<figure><img src="_static/showcase/use-12-hardware-check.png" alt="硬件检测"><figcaption>硬件检测：两路相机实时画面，一键读取每个舵机的状态</figcaption></figure>
+<figure><img src="_static/showcase/use-13-calibrate-web.png" alt="网页标定"><figcaption>网页标定：依照 3D 模型逐个关节完成标定</figcaption></figure>
+<figure><img src="_static/showcase/use-07-vscode-run.png" alt="浏览器版 VS Code"><figcaption>浏览器版 VS Code：查看、修改、运行端侧板上的代码</figcaption></figure>
 </div>
 
-### 小板子也能稳定录数据
+### 一次设置，连接训练电脑
 
-RK3566 这类板子算力有限，原版 LeRobot 用软件编码视频，在上面每秒只编得动约 11 帧。维护版在板子上自动改用芯片自带的硬件编码器、每 10 帧算一次画面统计量、预览改成网页，两路 640×480 相机实测平均每秒 28.8 帧，命令不用加任何参数。录的时候在浏览器里看两路画面和关节曲线：
+推理服务与训练曲线都在训练电脑上。在端侧板的网络设置页填写训练电脑的地址、账号与密码（或私钥），端侧板即把训练电脑上的推理服务与 TensorBoard 映射到本机：端侧板上的程序直接访问本机，在任意一台电脑上打开端侧板的地址即可查看训练曲线。网络中断或重启后自动重新连接。
+
+<div class="shot-grid">
+<figure><img src="_static/showcase/connect-server.png" alt="连接服务器"><figcaption>连接服务器：每一路映射的状态清晰可见</figcaption></figure>
+<figure><img src="_static/showcase/use-17-tensorboard.png" alt="TensorBoard"><figcaption>训练曲线：损失、梯度、吞吐与显存，训练过程中即可查看</figcaption></figure>
+</div>
+
+### 端侧板稳定录制数据
+
+RK3566 这类端侧板算力有限，原版 LeRobot 使用软件编码视频，在其上每秒只能编码约 11 帧。维护版在端侧板上自动改用芯片自带的硬件编码器、每 10 帧计算一次画面统计量、将预览改为网页，两路 640×480 相机实测平均每秒 28.8 帧，命令无需添加任何参数。录制时可在浏览器中查看两路画面与关节曲线：
 
 <video controls muted playsinline preload="metadata" poster="_static/poster/rerun.jpg" src="_static/media/rerun.mp4"></video>
 
-### 网络差也跑得满
+### 低带宽下保持满速
 
-部署时相机画面压缩后在后台发送，控制循环不等网络。板子和电脑之间实测（ACT，两路 640×480 相机）：
+部署时，相机画面经压缩后在后台发送，控制循环不等待网络。端侧板与训练电脑之间的实测结果（ACT，两路 640×480 相机）：
 
-| 网络 | 动作频率 | 动作间隔 p95 | 板子平均上行 |
+| 网络 | 动作频率 | 动作间隔 p95 | 端侧板平均上行 |
 | --- | --- | --- | --- |
 | 百兆局域网 | 29.4 Hz | 44 ms | 1.4 Mbps |
 | 上行限 5 Mbps | 29.5 Hz | 44 ms | 1.0 Mbps |
 
-原版同步发送原图时，同样限到 5 Mbps 只剩每秒 3.9 次动作。
+原版同步发送原图时，在同样 5 Mbps 的限制下只有每秒 3.9 次动作。
 
-### 一条命令装好，一条命令升级
+### 一条命令安装，一条命令升级
 
-板子上的全部东西（系统设置、机械臂与相机的固定名字、六个网页服务、LeRobot 环境）都随 LeRobot 一起发布。新板子敲一条命令装好，以后敲 `xbotics-config update` 一起升级：服务开关、改过的密码、自己装的包都保留。
+端侧板上的全部内容（系统设置、机械臂与相机的固定名字、六个网页服务、LeRobot 环境）都随 LeRobot 一同发布。新端侧板执行一条命令即可完成安装，此后执行 `xbotics-config update` 统一升级，服务开关、修改过的密码与自行安装的包均会保留。
 
 <img class="shot" src="_static/showcase/install-02-update.png" alt="xbotics-config update">
 
@@ -97,24 +97,24 @@ RK3566 这类板子算力有限，原版 LeRobot 用软件编码视频，在上�
 
 | 模型 | 特点 |
 | --- | --- |
-| ACT | 一次预测一段动作，对显卡要求低，单任务入门首选 |
-| Diffusion Policy | 用扩散模型生成动作，同一任务有多种做法时更稳 |
-| SmolVLA | 视觉-语言-动作模型，读任务描述，一个模型做多个任务 |
-| PI0 | 更大的视觉-语言-动作模型，多任务，显存要求高 |
+| ACT | 一次预测一段动作，对显卡要求低，适合单任务入门 |
+| Diffusion Policy | 用扩散模型生成动作，同一任务存在多种做法时更稳定 |
+| SmolVLA | 视觉-语言-动作模型，读取任务描述，一个模型完成多个任务 |
+| PI0 | 规模更大的视觉-语言-动作模型，支持多任务，显存要求较高 |
 
-## 从这里开始
+## 快速开始
 
-三章基础配置，照着做完，你的板子连好网、连上训练电脑，两条机械臂标定好，主臂能带着从臂动：
+完成以下三章基础配置后，你的端侧板将联网并连接训练电脑，两条机械臂完成标定，主臂能够带动从臂运动：
 
-1. **[板子上手](board.md)**：烧写镜像、一条命令装好、配网、连训练电脑、网页终端和编辑器
-2. **[训练电脑](train-env.md)**：在带 NVIDIA 显卡的电脑上装好 LeRobot 和 SO-101 仿真，打开训练曲线
-3. **[硬件准备](hardware.md)**：接线、硬件检测、标定，用遥操作检查一遍
+1. **[端侧板上手](board.md)**：烧写镜像、一条命令安装、配网、连接训练电脑、网页终端与编辑器
+2. **[训练电脑](train-env.md)**：在配有 NVIDIA 显卡的电脑上安装 LeRobot 与 SO-101 仿真，查看训练曲线
+3. **[硬件准备](hardware.md)**：接线、硬件检测、标定，并用遥操作完成检查
 
-录数据怎么设计任务、训练怎么选模型和调参数、评测与上真机怎么判断，是 Xbotics 具身智能课程的内容，在课程里带着你一步步做。
+录制数据时如何设计任务、训练时如何选择模型与调整参数、评测与上真机前如何判断，属于 Xbotics 具身智能课程的内容，课程中将逐步讲解与实践。
 
-## 用的版本
+## 版本
 
-全部内容用 Xbotics 维护的 LeRobot：分支 `xbotics-0.6`，标签 `xbotics-v0.6.1`，基于上游 LeRobot 0.6.1。板子和训练电脑要用同一个标签。代码与改动说明在 [GitHub](https://github.com/Xbotics-Embodied-AI-club/lerobot/tree/xbotics-0.6)。
+本站全部内容使用 Xbotics 维护的 LeRobot：分支 `xbotics-0.6`，标签 `xbotics-v0.6.1`，基于上游 LeRobot 0.6.1。端侧板与训练电脑须使用同一个标签。代码与改动说明见 [GitHub](https://github.com/Xbotics-Embodied-AI-club/lerobot/tree/xbotics-0.6)。
 
 ```{toctree}
 :hidden:
