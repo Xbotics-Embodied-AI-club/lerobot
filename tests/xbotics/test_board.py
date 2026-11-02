@@ -147,12 +147,19 @@ def test_parse_tunnel_remote_host_and_saved_key(provision, tunnel):
     assert "_key" not in cfg and cfg["forwards"][0]["remote_host"] == "10.0.0.5"
 
 
+def test_forward_failures_are_not_tunnel_errors(provision, monkeypatch):
+    out = "隧道：0.0.0.0:8080 经 u@srv\nchannel 2: open failed: connect failed: Connection refused\n"
+    monkeypatch.setattr(provision.subprocess, "run", lambda *a, **k: type("P", (), {"stdout": out})())
+    assert provision.tunnel_error() == ""
+
+
 @pytest.mark.parametrize(
     "line,word",
     [
         ("u@srv: Permission denied (publickey,password).", "登录被拒"),
         ("ssh: Could not resolve hostname nope: Name or service not known", "找不到"),
         ("ssh: connect to host 1.2.3.4 port 22: Connection timed out", "连不上"),
+        ("ssh: connect to host 1.2.3.4 port 2200: Connection refused", "拒绝连接"),
         ("bind [0.0.0.0]:6006: Address already in use", "占用"),
         ('Load key "/etc/xbotics/tunnel_key": invalid format', "格式"),
     ],

@@ -367,6 +367,9 @@ def tunnel_error() -> str:
     # 只看最近两次启动的输出：上一次失败的原因，与这一次的（重连中）
     recent = lines[starts[-2] if len(starts) > 1 else 0 :]
     for line in reversed(recent):
+        # 「channel N: open failed」是某一路转发在服务器那头没服务，不是隧道本身的错，页面在映射清单里单独标
+        if line.startswith("channel "):
+            continue
         for needle, text in TUNNEL_ERRORS:
             if needle in line:
                 return text
