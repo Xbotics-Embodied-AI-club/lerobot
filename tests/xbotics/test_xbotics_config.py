@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "xbotics" / "config" / "xbotics-config"
+SCRIPT = Path(__file__).resolve().parents[2] / "src/lerobot/xbotics/board/config/xbotics-config"
 UNITS = {
     "terminal": "ttyd",
     "jupyter": "xbotics-jupyter",

@@ -126,6 +126,7 @@ dataset = [
 training = [
     "lerobot[dataset]",
     "wandb>=0.24.0,<0.28.0",
+    "tensorboard>=2.18.0,<3.0.0",  # Xbotics: lerobot-train writes TensorBoard curves by default
     "lerobot[accelerate-dep]",
 ]
 hardware = [
@@ -408,7 +409,7 @@ lerobot = [
     "annotations/steerable_pipeline/prompts/*.txt",
     "xbotics/calibrate_web/static/**/*",
     "xbotics/calibrate_web/model/**/*",
-    "xbotics/inference_console/webui.html",
+    "xbotics/inference_console/webui.html", "xbotics/board/**/*",
 ]
 
 [tool.setuptools.packages.find]

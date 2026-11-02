@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -88,6 +89,18 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+
+
+@dataclass
+class TensorBoardConfig:
+    """Local TensorBoard logging (Xbotics). On by default: needs no account and no network.
+
+    Watch a run while it trains with `tensorboard --logdir <output_dir>/tensorboard`.
+    """
+
+    enable: bool = True
+    # Event-file directory; defaults to `<output_dir>/tensorboard`.
+    log_dir: Path | None = None
 
 
 @dataclass

@@ -1,0 +1,10 @@
+{
+  "python.defaultInterpreterPath": "/root/xbotics/.venv/bin/python",
+  "python.languageServer": "None",
+  "basedpyright.analysis.typeCheckingMode": "standard",
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "security.workspace.trust.enabled": false,
+  "chat.disableAIFeatures": true,
+  "workbench.startupEditor": "none",
+  "workbench.secondarySideBar.defaultVisibility": "hidden"
+}

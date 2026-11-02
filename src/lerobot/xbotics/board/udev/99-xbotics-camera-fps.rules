@@ -1,0 +1,2 @@
+# USB 相机接上时关掉「曝光优先」：开着的话光线一暗相机就降帧拉长曝光，录数据整体跟着掉帧
+ACTION=="add", SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", ATTR{index}=="0", RUN+="/usr/bin/v4l2-ctl -d $devnode --set-ctrl=exposure_auto_priority=0"

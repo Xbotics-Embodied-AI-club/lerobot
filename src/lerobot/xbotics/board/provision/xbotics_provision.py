@@ -6,17 +6,26 @@ DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d �
 再关掉 ap0 的转发让热点设备上不了外网，连上热点的电脑 / 手机检测联网时就会弹出这个页面。
 同一个页面在局域网里也能打开（http://<板子地址>:8001/，80 端口也行）。只用系统 Python 标准库与 nmcli，以 root 运行。
 
-只在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测过；装法见 XBOTICS.md。
+页面上另有「连服务器」一栏：填服务器地址、账号和密码（或私钥），板子用 SSH 隧道把服务器上的推理服务、
+TensorBoard 等端口映射到自己的 0.0.0.0，隧道本身见同目录的 xbotics_tunnel.py。
+
+只在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测过；
+随维护版 LeRobot 安装与升级（python -m lerobot.xbotics.board install），见 XBOTICS.md。
 """
 
 import ipaddress
 import json
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# 板子上用系统 Python 直接跑这个文件（不进 LeRobot 环境）：同目录的隧道模块按文件路径导入
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xbotics_tunnel as tunnel  # noqa: E402
 
 AP_IFACE, STA_IFACE, ETH_IFACE = "ap0", "wlan0", "eth0"
 AP_CON = "xbotics-ap"
@@ -319,6 +328,196 @@ def apply_wired(cfg: dict) -> None:
     STATUS.set_job("wired", "done", f"网线已应用，地址 {', '.join(info['addresses']) or '还在获取'}")
 
 
+def systemctl(*args: str) -> tuple[int, str]:
+    proc = subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=30, check=False)
+    return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+
+# ssh 的英文报错 → 给人看的话；按顺序取第一个对上的
+TUNNEL_ERRORS = (
+    ("Permission denied", "登录被拒：账号、密码或私钥不对"),
+    ("incorrect passphrase", "私钥的口令不对"),
+    ("invalid format", "私钥格式不对：要粘贴整段私钥，从 -----BEGIN 那一行到 -----END 那一行"),
+    ("Could not resolve hostname", "找不到这个服务器地址，检查一下拼写"),
+    ("Connection refused", "服务器拒绝连接：SSH 端口不对，或服务器没开 SSH"),
+    ("Connection timed out", "连不上服务器：地址不对，或板子的网络到不了它"),
+    ("No route to host", "连不上服务器：板子的网络到不了它"),
+    ("Network is unreachable", "板子还没联网：先在上面连好 Wi-Fi 或网线"),
+    ("cannot listen to port", "板子上的端口已被别的程序占用，换一个板子端口"),
+    ("Address already in use", "板子上的端口已被别的程序占用，换一个板子端口"),
+    (
+        "REMOTE HOST IDENTIFICATION HAS CHANGED",
+        "服务器的指纹变了（重装过系统？）：再点一次「保存并连接」会重新认它",
+    ),
+    (
+        "administratively prohibited",
+        "服务器不允许端口转发：在服务器的 sshd_config 里设 AllowTcpForwarding yes",
+    ),
+)
+
+
+def tunnel_error() -> str:
+    """这一次启动以来 ssh 报的最后一个错误，翻成白话；没错误就是空串。"""
+    proc = subprocess.run(
+        ["journalctl", "-u", tunnel.UNIT, "-n", "40", "-o", "cat", "--no-pager"],
+        capture_output=True, text=True, timeout=10, check=False,
+    )  # fmt: skip
+    lines = proc.stdout.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("隧道：")]
+    # 只看最近两次启动的输出：上一次失败的原因，与这一次的（重连中）
+    recent = lines[starts[-2] if len(starts) > 1 else 0 :]
+    for line in reversed(recent):
+        for needle, text in TUNNEL_ERRORS:
+            if needle in line:
+                return text
+    return ""
+
+
+def probe_forward(port: int) -> str:
+    """经隧道连一次板子上的这个端口：ok = 服务器那头有服务在答；closed = 连上就被断开（服务器上这个端口没服务）；
+    down = 板子上没在监听（隧道没起来）。"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
+            s.settimeout(3)
+            s.sendall(b"GET / HTTP/1.0\r\n\r\n")
+            try:
+                return "ok" if s.recv(1) else "closed"
+            except TimeoutError:
+                return "ok"  # 连着、没回话也没断：当作有服务（有的协议要客户端先说完整的话）
+            except OSError:
+                return "closed"
+    except OSError:
+        return "down"
+
+
+class Tunnel:
+    """连服务器的隧道：设置、状态。状态里的端口探测每 15 秒一次（每探一次服务器上就多一条连接记录）。"""
+
+    def __init__(self) -> None:
+        self.probes: dict[int, str] = {}
+        self.probed_at = 0.0
+
+    def status(self) -> dict:
+        cfg = tunnel.load_config()
+        _, enabled = systemctl("is-enabled", tunnel.UNIT)
+        _, active = systemctl("is-active", tunnel.UNIT)
+        forwards = cfg.get("forwards") or tunnel.DEFAULT_FORWARDS
+        if active == "active" and time.time() - self.probed_at > 15:
+            self.probes = {int(f["local"]): probe_forward(int(f["local"])) for f in forwards}
+            self.probed_at = time.time()
+        elif active != "active":
+            self.probes = {}
+        return {
+            "configured": bool(cfg.get("host")),
+            "host": cfg.get("host", ""),
+            "port": cfg.get("port", 22),
+            "user": cfg.get("user", ""),
+            "auth": cfg.get("auth", "password"),
+            "has_password": bool(cfg.get("password")),
+            "has_key": tunnel.KEY_FILE.exists(),
+            "forwards": forwards,
+            "enabled": enabled == "enabled",
+            "state": active,
+            "probes": {str(k): v for k, v in self.probes.items()},
+            "error": tunnel_error() if enabled == "enabled" else "",
+        }
+
+
+TUNNEL = Tunnel()
+
+
+def parse_tunnel(body: dict, old: dict) -> dict:
+    """把页面上填的隧道设置校验成配置；哪一格不对，报错里就点名哪一格。没重填的密码 / 私钥沿用旧的。"""
+    host = str(body.get("host", "")).strip()
+    user = str(body.get("user", "")).strip()
+    if not host:
+        raise ValueError("服务器地址没填")
+    if not user:
+        raise ValueError("账号没填")
+    port = str(body.get("port") or 22).strip()
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError(f"SSH 端口「{port}」应当是 1 到 65535 的数字，一般是 22")
+    auth = "key" if body.get("auth") == "key" else "password"
+    same_login = old.get("host") == host and old.get("user") == user
+    cfg = {"host": host, "port": int(port), "user": user, "auth": auth}
+    if auth == "password":
+        password = body.get("password") or (old.get("password") if same_login else "")
+        if not password:
+            raise ValueError("密码没填")
+        cfg["password"] = password
+    else:
+        key = str(body.get("key") or "").strip()
+        if key and "PRIVATE KEY" not in key:
+            raise ValueError(
+                "这不像私钥：要粘贴整段私钥，从 -----BEGIN … PRIVATE KEY----- 到 -----END … PRIVATE KEY-----"
+            )
+        if not key and not (same_login and tunnel.KEY_FILE.exists()):
+            raise ValueError("私钥没填")
+        if key:
+            cfg["_key"] = key + "\n"
+        cfg["passphrase"] = body.get("passphrase") or (
+            old.get("passphrase", "") if same_login and not key else ""
+        )
+    forwards, seen = [], set()
+    for i, f in enumerate(body.get("forwards") or [], 1):
+        try:
+            local, remote = int(f.get("local")), int(f.get("remote") or f.get("local"))
+        except (TypeError, ValueError):
+            raise ValueError(f"第 {i} 条映射的端口要填数字") from None
+        if not (1024 <= local <= 65535 and 1 <= remote <= 65535):
+            raise ValueError(f"第 {i} 条映射：板子端口要在 1024–65535，服务器端口要在 1–65535")
+        if local in seen or local in PORTS or 8001 <= local <= 8007 or local in (9090, 9091):
+            raise ValueError(
+                f"第 {i} 条映射：板子端口 {local} 已被占用（8001–8007 是板子自己的网页，9090、9091 是录数据的预览）"
+            )
+        seen.add(local)
+        remote_host = str(f.get("remote_host") or "127.0.0.1").strip()
+        forwards.append({"name": str(f.get("name") or f"端口 {local}").strip(), "local": local,
+                         "remote_host": remote_host, "remote": remote, "web": f.get("web") is not False})  # fmt: skip
+    if not forwards:
+        raise ValueError("至少要映射一个端口")
+    cfg["forwards"] = forwards
+    return cfg
+
+
+def save_tunnel(body: dict) -> None:
+    old = tunnel.load_config()
+    try:
+        cfg = parse_tunnel(body, old)
+    except ValueError as e:
+        STATUS.set_job("tunnel", "failed", str(e))
+        return
+    STATUS.set_job("tunnel", "running", f"正在连接 {cfg['user']}@{cfg['host']}…")
+    tunnel.CONF_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    key = cfg.pop("_key", None)
+    if key:
+        tunnel.KEY_FILE.write_text(key)
+        tunnel.KEY_FILE.chmod(0o600)
+    if old.get("host") != cfg["host"] or old.get("port") != cfg["port"]:
+        tunnel.KNOWN_HOSTS.unlink(missing_ok=True)  # 换了服务器：重新认它的指纹
+    tunnel.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    tunnel.CONFIG.chmod(0o600)
+    systemctl("enable", tunnel.UNIT)
+    code, out = systemctl("restart", tunnel.UNIT)
+    if code != 0:
+        STATUS.set_job("tunnel", "failed", f"隧道服务没起来：{out}")
+        return
+    TUNNEL.probed_at = 0.0
+    # 登录加建立转发一般两三秒；等到端口在板子上听起来，或等满 15 秒看报错
+    for _ in range(15):
+        time.sleep(1)
+        if all(probe_forward(f["local"]) != "down" for f in cfg["forwards"]):
+            names = "、".join(f"{f['name']}（{f['local']}）" for f in cfg["forwards"])
+            STATUS.set_job("tunnel", "done", f"已连上 {cfg['host']}：{names} 已映射到板子")
+            return
+    STATUS.set_job("tunnel", "failed", tunnel_error() or "隧道还没连上，稍等再看状态")
+
+
+def stop_tunnel() -> None:
+    systemctl("disable", "--now", tunnel.UNIT)
+    STATUS.set_job("tunnel", "done", "已断开服务器，开机也不再自动连")
+
+
 def in_background(fn, *args) -> None:
     threading.Thread(target=fn, args=args, daemon=True).start()
 
@@ -352,6 +551,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(STATUS.snapshot())
         if path == "/api/networks":
             return self.send_json(scan_networks())
+        if path == "/api/tunnel":
+            return self.send_json(TUNNEL.status())
         if path in ("/", "/index.html") and host in board_hosts():
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -387,6 +588,10 @@ class Handler(BaseHTTPRequestHandler):
             STATUS.set_job("wifi", "done" if code == 0 else "failed", f"已删掉 {name}" if code == 0 else err)
         elif self.path == "/api/wired":
             in_background(apply_wired, body)
+        elif self.path == "/api/tunnel":
+            in_background(save_tunnel, body)
+        elif self.path == "/api/tunnel/stop":
+            in_background(stop_tunnel)
         else:
             return self.send_json({"error": "没有这个接口"}, 404)
         return self.send_json({"ok": True})
@@ -399,7 +604,9 @@ def main() -> None:
     servers = [ThreadingHTTPServer(("0.0.0.0", port), Handler) for port in PORTS]
     for server in servers[1:]:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"配网服务：热点 {ap_ssid()}，页面 http://{AP_ADDR}/（端口 {'、'.join(map(str, PORTS))}）", flush=True)
+    print(
+        f"配网服务：热点 {ap_ssid()}，页面 http://{AP_ADDR}/（端口 {'、'.join(map(str, PORTS))}）", flush=True
+    )
     servers[0].serve_forever()
 
 

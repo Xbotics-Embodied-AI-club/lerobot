@@ -1,0 +1,11 @@
+[Unit]
+Description=Xbotics kit: lock CPU and DDR to their highest frequency
+After=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for p in /sys/devices/system/cpu/cpufreq/policy*; do echo performance > "$p/scaling_governor"; done; echo performance > /sys/class/devfreq/dmc/governor'
+
+[Install]
+WantedBy=multi-user.target

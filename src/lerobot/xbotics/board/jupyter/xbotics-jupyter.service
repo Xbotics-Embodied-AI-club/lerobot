@@ -1,0 +1,13 @@
+[Unit]
+Description=Xbotics kit: JupyterLab in the LeRobot environment
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/root/xbotics/.venv/bin/jupyter-lab
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

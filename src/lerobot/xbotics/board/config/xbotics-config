@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# 星禾套件端侧板的网页服务开关（像树莓派的 raspi-config）：
+# 星禾套件端侧板的网页服务开关与升级（像树莓派的 raspi-config）：
 #   xbotics-config                 弹出菜单，空格勾选要开的服务，回车生效
 #   xbotics-config status          列出每个服务开没开、在不在跑、网址
 #   xbotics-config enable  <名字>…  开启并设为开机自启
 #   xbotics-config disable <名字>…  关闭并取消开机自启
+#   xbotics-config update          升级 LeRobot，并把板子上的其余东西（网页、服务、设置）一起升级
 # 名字：terminal jupyter vscode hardware-check calibrate（all = 全部）。
-# 8001 配网页不在这里：关了就没法从热点进板子改网络。装法见维护版 LeRobot 的 XBOTICS.md。
+# 8001 网络设置页不在这里：关了就没法从热点进板子改网络；连服务器的隧道在那个页面上设。
+# 本脚本随维护版 LeRobot 发布（lerobot/xbotics/board/config/），升级时自己也会换成新版。
 set -euo pipefail
 
 # 名字|端口|systemd 服务|说明
@@ -112,6 +114,40 @@ status() {
     printf '%-16s %-6s %-8s %-8s %s\n' "$(field "$row" 1)" "$(field "$row" 2)" "$enabled" "$active" \
       "http://$ip:$(field "$row" 2)  $(field "$row" 4)"
   done
+  if systemctl cat xbotics-tunnel >/dev/null 2>&1; then
+    printf '%-16s %-6s %-8s %-8s %s\n' tunnel - "$(systemctl is-enabled xbotics-tunnel 2>/dev/null || true)" \
+      "$(systemctl is-active xbotics-tunnel 2>/dev/null || true)" "连服务器的隧道：在 http://$ip:8001 上设"
+  fi
+}
+
+update() {
+  # 放进单独的 systemd 单元里跑：升级最后会重启网页终端、VS Code，从它们里面敲的升级不能跟着被杀掉
+  local unit=xbotics-update since result
+  if systemctl is-active -q "$unit" 2>/dev/null; then
+    echo "已经有一次升级在跑了，接着看它的输出（Ctrl+C 只是不看，升级照常进行）"
+  else
+    systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    since=$(date '+%Y-%m-%d %H:%M:%S')
+    systemd-run --unit="$unit" --quiet --working-directory=/root/xbotics \
+      -p Environment=HOME=/root -p Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      /bin/bash -c 'set -euo pipefail
+        echo "· 升级 LeRobot（取标签现在指向的版本）"
+        uv lock --upgrade-package lerobot
+        uv sync
+        exec .venv/bin/python -m lerobot.xbotics.board install'
+  fi
+  journalctl -f -u "$unit" -o cat --since "${since:-today}" &
+  local follower=$!
+  while [[ "$(systemctl is-active "$unit" 2>/dev/null)" =~ ^(active|activating|deactivating)$ ]]; do sleep 1; done
+  sleep 1
+  kill "$follower" 2>/dev/null || true
+  result=$(systemctl show -p Result --value "$unit" 2>/dev/null || echo success)
+  if [[ "$result" != success ]]; then
+    systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    echo "升级没成功（$result）：上面是出错的地方；修好网络等原因后再敲一次 xbotics-config update" >&2
+    return 1
+  fi
+  echo "升级完成"
 }
 
 ordered() { # 按 SERVICES 的顺序排好，terminal 放最后（关它可能断开当前会话）
@@ -187,7 +223,7 @@ menu() {
 }
 
 usage() {
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 cmd=${1:-menu}
@@ -195,6 +231,7 @@ cmd=${1:-menu}
 case "$cmd" in
   menu) require_root; menu ;;
   status) status ;;
+  update) require_root update; update ;;
   enable | disable)
     require_root "$cmd" "$@"
     [[ $# -gt 0 ]] || { echo "要给服务名：$(names)（或 all）" >&2; exit 1; }

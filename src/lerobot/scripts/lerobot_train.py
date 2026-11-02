@@ -15,7 +15,7 @@
 # limitations under the License.
 """Train a policy.
 
-Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
+Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb + tensorboard extras)
 """
 
 import dataclasses
@@ -35,6 +35,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
 
+from lerobot.common.tensorboard_utils import TensorBoardLogger
 from lerobot.common.train_utils import (
     gather_fsdp_state_dicts,
     get_step_checkpoint_dir,
@@ -438,6 +439,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             cfg.checkpoint_path, optimizer, lr_scheduler, load_optimizer=not is_fsdp
         )
 
+    # Xbotics: local TensorBoard curves, on by default. Created after the resume step is known so a
+    # resumed run continues its curves from that step.
+    tb_logger = None
+    if cfg.tensorboard.enable and is_main_process:
+        require_package("tensorboard", extra="training")
+        tb_logger = TensorBoardLogger(cfg, start_step=step)
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
@@ -654,7 +662,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 if step_time > 0:
                     train_tracker.samples_per_s = effective_batch_size / step_time
                 logging.info(train_tracker)
-                if wandb_logger:
+                if wandb_logger or tb_logger:
                     # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
                     # tracker by update_policy, so to_dict() already carries their windowed,
                     # rank-reduced averages — no per-step output_dict passthrough needed.
@@ -663,7 +671,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
                         wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
-                    wandb_logger.log_dict(wandb_log_dict, step)
+                    if wandb_logger:
+                        wandb_logger.log_dict(wandb_log_dict, step)
+                    if tb_logger:
+                        tb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         if is_eval_step:
@@ -688,6 +699,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 logging.info(f"step {step}: eval_loss={eval_loss:.4f}")
                 if wandb_logger:
                     wandb_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
+                if tb_logger:
+                    tb_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
 
         if cfg.save_checkpoint and is_saving_step:
             # Under FSDP, gathering the full model + optimizer state dicts is a cross-rank collective,
@@ -773,11 +786,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                if tb_logger:
+                    # eval_info's "overall" scalars were popped into eval_tracker above; per-suite
+                    # and per-task scalars are flattened to eval/<suite>/<metric>.
+                    tb_logger.log_dict({**eval_tracker.to_dict(), **eval_info}, step, mode="eval")
 
             accelerator.wait_for_everyone()
 
     if is_main_process:
         progbar.close()
+        if tb_logger:
+            tb_logger.close()
 
     is_fsdp = accelerator.distributed_type == DistributedType.FSDP
     model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None
