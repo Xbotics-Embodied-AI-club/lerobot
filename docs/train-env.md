@@ -74,7 +74,7 @@ hf auth login
 (train-env-ssh)=
 ## 2.5 允许端侧板连接这台电脑
 
-端侧板通过 SSH 连接这台电脑（[1.4 节](#connect-server)），因此需先安装 SSH 服务，并记下这台电脑的 IP：
+端侧板通过 SSH 连接这台电脑（[1.4 节](#connect-server)），因此需先安装 SSH 服务，并记下这台电脑的 IP。推理与训练分在两台电脑上时，两台都按本节设置：
 
 ```bash
 sudo apt install -y openssh-server

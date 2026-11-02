@@ -55,18 +55,18 @@ SO-101 仿真按真机搭建：机械臂模型、相机位置与视野、控制�
 端侧板不接显示器，所有操作都在浏览器中完成：连接端侧板的热点后，网络设置页自动弹出；此后网页终端、浏览器版 VS Code、JupyterLab、硬件检测与网页标定都通过网址打开，你的电脑上无需安装任何软件。
 
 <div class="shot-grid">
-<figure><img src="_static/showcase/network-page.png" alt="网络设置页"><figcaption>网络设置：连接 Wi-Fi、设置网线，所有网页集中打开</figcaption></figure>
+<figure><img src="_static/showcase/network-page.png" alt="网络设置页"><figcaption>网络设置：状态一目了然，Wi-Fi、网线、连接服务器、打开网页分标签设置</figcaption></figure>
 <figure><img src="_static/showcase/use-12-hardware-check.png" alt="硬件检测"><figcaption>硬件检测：两路相机实时画面，一键读取每个舵机的状态</figcaption></figure>
 <figure><img src="_static/showcase/use-13-calibrate-web.png" alt="网页标定"><figcaption>网页标定：依照 3D 模型逐个关节完成标定</figcaption></figure>
 <figure><img src="_static/showcase/use-07-vscode-run.png" alt="浏览器版 VS Code"><figcaption>浏览器版 VS Code：查看、修改、运行端侧板上的代码</figcaption></figure>
 </div>
 
-### 一次设置，连接训练电脑
+### 连接一台或多台训练电脑
 
-推理服务与训练曲线都在训练电脑上。在端侧板的网络设置页填写训练电脑的地址、账号与密码（或私钥），端侧板即把训练电脑上的推理服务与 TensorBoard 映射到本机：端侧板上的程序直接访问本机，在任意一台电脑上打开端侧板的地址即可查看训练曲线。网络中断或重启后自动重新连接。
+推理服务与训练曲线都在训练电脑上，二者可以在同一台电脑上，也可以分在两台。在端侧板的网络设置页逐台添加，填写地址、账号与密码（或私钥），端侧板即把各台电脑上的推理服务与 TensorBoard 映射到本机：端侧板上的程序直接访问本机，在任意一台电脑上打开端侧板的地址即可查看训练曲线。网络中断或重启后自动重新连接。
 
 <div class="shot-grid">
-<figure><img src="_static/showcase/connect-server.png" alt="连接服务器"><figcaption>连接服务器：每一路映射的状态清晰可见</figcaption></figure>
+<figure><img src="_static/showcase/connect-server.png" alt="连接服务器"><figcaption>连接服务器：推理服务器与训练服务器各一张卡片，每一路映射的状态清晰可见</figcaption></figure>
 <figure><img src="_static/showcase/use-17-tensorboard.png" alt="TensorBoard"><figcaption>训练曲线：损失、梯度、吞吐与显存，训练过程中即可查看</figcaption></figure>
 </div>
 
@@ -106,7 +106,7 @@ RK3566 这类端侧板算力有限，原版 LeRobot 使用软件编码视频，�
 
 完成以下三章基础配置后，你的端侧板将联网并连接训练电脑，两条机械臂完成标定，主臂能够带动从臂运动：
 
-1. **[端侧板上手](board.md)**：烧写镜像、一条命令安装、配网、连接训练电脑、网页终端与编辑器
+1. **[端侧板上手](board.md)**：烧写镜像、一条命令安装、配网、连接一台或多台训练电脑、网页终端与编辑器
 2. **[训练电脑](train-env.md)**：在配有 NVIDIA 显卡的电脑上安装 LeRobot 与 SO-101 仿真，查看训练曲线
 3. **[硬件准备](hardware.md)**：接线、硬件检测、标定，并用遥操作完成检查
 
