@@ -285,7 +285,8 @@ xbotics-config update
 
 取标签现在指向的 LeRobot，再把上表重装一遍，只改有变化的部分：
 
-- 保持 `xbotics-config` 里的服务开关；已经设过的 JupyterLab、VS Code 密码不覆盖；学员自己 `uv add` 的包保留。
+- 保持 `xbotics-config` 里的服务开关；已经设过的 JupyterLab、VS Code 密码不覆盖。
+- 板子环境的 pyproject 只改维护版管的几项（Python 版本、`lerobot` 与 `jupyterlab` 两个依赖、override-dependencies、LeRobot 的源），用 tomlkit 逐键改：学员自己 `uv add` 的包、给 lerobot 加的可选组、源、索引、依赖组原样保留；LeRobot 的源是标签就换成新版的标签，指到分支或提交的测试板不动。
 - 在跑的服务有改动才重启；JupyterLab、硬件检测、网页标定在 LeRobot 换了版本时重启，没换就不动，不会无故打断正在跑的 notebook。
 - 升级放在单独的 systemd 单元里跑、重启延后 3 秒：从网页终端或 VS Code 终端里敲也不会把升级本身掐断，页面断开一下刷新即可。
 
@@ -366,7 +367,9 @@ NetworkManager 1.36 的两个坑，代码里已绕开：
 - 隧道就是 OpenSSH 客户端的本地转发 `ssh -N -L 0.0.0.0:<板子端口>:<地址>:<端口>`，由 systemd 服务 `xbotics-tunnel` 拉起：断了 5 秒后重连，
   `ServerAliveInterval` 让断网在 30 秒内被发现；设好以后开机自动连，「断开」按钮同时取消开机自连。
 - 密码与私钥口令经 OpenSSH 自带的 `SSH_ASKPASS` 交给 ssh（OpenSSH 8.4 起），每次重连都能自己登录，不用 sshpass。设置存在 `/etc/xbotics/`，只有 root 能读。
-- ssh 的英文报错译成白话显示在页面上：登录被拒、地址找不到、端口不对、板子端口被占、服务器不许转发（`AllowTcpForwarding`）等。
+- ssh 的英文报错译成白话显示在页面上：登录被拒、私钥口令不对、地址找不到、端口不对、板子端口被占、服务器不许转发（`AllowTcpForwarding`）等。
+- 账号、密码或私钥不对时不再重试（一直拿错的密码去试，服务器上的 fail2ban 之类会把账号锁掉），改好后再点「保存并连接」；每次保存都重新认服务器的指纹，服务器重装过系统也能连上。
+- 每条映射的「通 / 没有服务」：板子连一下自己的这个端口、什么都不发，服务器那头没服务时 ssh 会马上断开这条连接，有服务时连接一直开着，gRPC 的推理服务也判得准。
 - 服务器那边只要开着 SSH、允许 TCP 转发（OpenSSH 默认允许），推理服务与 TensorBoard 照默认只听 127.0.0.1 就行，不用对外开端口。
 
 实测（2026-11-02，ZTL A566 ↔ 同网段的一台 aarch64 机器当服务器）：网页上填账号密码、点保存，约 3 秒连上，`0.0.0.0:8080`、`0.0.0.0:6006` 由 ssh 在听，
