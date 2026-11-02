@@ -1,0 +1,15 @@
+[Unit]
+Description=Xbotics kit: SSH tunnel %i that maps server ports onto the board's 0.0.0.0
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/xbotics/provision/xbotics_tunnel.py %i
+Restart=always
+RestartSec=5
+# 账号、密码或私钥不正确（xbotics_tunnel.py 退出码 3）时不重试，以免服务器锁定该账号
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=multi-user.target

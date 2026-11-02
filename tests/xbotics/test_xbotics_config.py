@@ -1,4 +1,4 @@
-"""xbotics-config（板子网页服务开关）：用假的 systemctl / whiptail / hostname 跑真脚本。
+"""xbotics-config（端侧板网页服务开关）：用替身 systemctl / whiptail / hostname / id 运行真实脚本。
 
 假 systemctl 把每个服务的状态存成文件：installed/<unit>、enabled/<unit>、active/<unit>；
 fail/<unit> 存在时 enable 失败；每次调用记进 calls.log。
@@ -61,6 +61,7 @@ def board(tmp_path):
         ("systemctl", FAKE_SYSTEMCTL),
         ("whiptail", FAKE_WHIPTAIL),
         ("hostname", "#!/usr/bin/env bash\necho 10.0.0.2\n"),
+        ("id", '#!/usr/bin/env bash\necho "${FAKE_UID:-0}"\n'),  # 默认当作 root；FAKE_UID 设成别的值即非 root
     ]:
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
@@ -84,7 +85,6 @@ def board(tmp_path):
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "FAKE_STATE": str(state),
-                "XBOTICS_CONFIG_NO_ROOT_CHECK": "1",
                 **env,
             },
             timeout=30,
@@ -113,7 +113,7 @@ def test_status_marks_missing_units(board):
     board.set_units(installed=["terminal", "jupyter"], enabled=["terminal"], active=["terminal"])
     out = board.run("status").stdout
     assert "terminal         8002   enabled  active   http://10.0.0.2:8002" in out
-    assert "calibrate        8006   没装" in out
+    assert "calibrate        8006   未安装" in out
 
 
 def test_unknown_name_changes_nothing(board):
@@ -161,13 +161,13 @@ def test_menu_only_changes_what_the_user_changed(board):
 
 
 def test_menu_survives_an_uninstalled_service(board):
-    """勾上没装的服务：别的照常生效，结果框里写明没装，不能整个脚本悄悄退出。"""
+    """勾选未安装的服务：其他服务照常生效，结果框中写明未安装，脚本不能整体静默退出。"""
     board.set_units(installed=["terminal", "jupyter", "vscode", "calibrate"])
     r = board.run(WHIPTAIL_CHOICE='"hardware-check" "calibrate"')
     assert r.returncode == 0, r.stderr
     assert "xbotics-calibrate-web" in board.enabled()
     log = (board.state / "msgbox.log").read_text()
-    assert "hardware-check：板子上没装 xbotics-hardware-check" in log
+    assert "hardware-check：端侧板上未安装 xbotics-hardware-check" in log
     assert "已开启 calibrate" in log
 
 
@@ -179,13 +179,6 @@ def test_menu_cancel_changes_nothing(board):
 
 
 def test_non_root_is_refused(board):
-    r = subprocess.run(
-        ["bash", str(SCRIPT), "enable", "calibrate"],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "XBOTICS_CONFIG_NO_ROOT_CHECK": ""},
-        timeout=30,
-    )
-    if os.geteuid() == 0:
-        pytest.skip("以 root 跑测试时看不到这条")
-    assert r.returncode == 1 and "要用 root 运行" in r.stderr
+    r = board.run("enable", "calibrate", FAKE_UID="1000")
+    assert r.returncode == 1 and "须以 root 运行" in r.stderr
+    assert board.calls("enable") == []

@@ -46,9 +46,8 @@ board_ip() {
 }
 
 require_root() {
-  # XBOTICS_CONFIG_NO_ROOT_CHECK 只给测试用（测试里 systemctl 是假的）
-  if [[ $EUID -ne 0 && -z "${XBOTICS_CONFIG_NO_ROOT_CHECK:-}" ]]; then
-    echo "要用 root 运行：sudo xbotics-config $*" >&2
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "须以 root 运行：sudo xbotics-config $*" >&2
     exit 1
   fi
 }
@@ -71,7 +70,7 @@ set_service() { # set_service <名字> on|off；失败时报原因并返回 1
   row=$(find_service "$1") || return 1
   unit=$(field "$row" 3)
   if ! systemctl cat "$unit" >/dev/null 2>&1; then
-    echo "$1：板子上没装 $unit（装法见 XBOTICS.md）" >&2
+    echo "$1：端侧板上未安装 $unit（安装方法见 XBOTICS.md）" >&2
     return 1
   fi
   if [[ "$2" == on ]]; then
@@ -101,23 +100,29 @@ status() {
   local row unit enabled active ip
   ip=$(board_ip)
   # 表头是中文，printf 按字节补齐会错位，直接写好对齐的一行
-  echo "名字             端口   开机自启 在跑     网址"
+  echo "名字             端口   开机自启 运行状态 网址"
   for row in "${SERVICES[@]}"; do
     unit=$(field "$row" 3)
     if systemctl cat "$unit" >/dev/null 2>&1; then
       enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
       active=$(systemctl is-active "$unit" 2>/dev/null || true)
     else
-      enabled="没装"
+      enabled="未安装"
       active="-"
     fi
     printf '%-16s %-6s %-8s %-8s %s\n' "$(field "$row" 1)" "$(field "$row" 2)" "$enabled" "$active" \
       "http://$ip:$(field "$row" 2)  $(field "$row" 4)"
   done
-  if systemctl cat xbotics-tunnel >/dev/null 2>&1; then
-    printf '%-16s %-6s %-8s %-8s %s\n' tunnel - "$(systemctl is-enabled xbotics-tunnel 2>/dev/null || true)" \
-      "$(systemctl is-active xbotics-tunnel 2>/dev/null || true)" "连接服务器的隧道：在 http://$ip:8001 设置"
-  fi
+  # 连接服务器的隧道：每台服务器一个实例，在网络设置页上添加与开关
+  local conf id name
+  for conf in /etc/xbotics/tunnels/*.json; do
+    [[ -e "$conf" ]] || continue
+    id=$(basename "$conf" .json)
+    name=$(python3 -c 'import json, sys; c = json.load(open(sys.argv[1])); print(f"{c[\"name\"]}（{c[\"user\"]}@{c[\"host\"]}）")' "$conf")
+    printf '%-16s %-6s %-8s %-8s %s\n' "tunnel@$id" - "$(systemctl is-enabled "xbotics-tunnel@$id" 2>/dev/null || true)" \
+      "$(systemctl is-active "xbotics-tunnel@$id" 2>/dev/null || true)" "连接服务器：$name"
+  done
+  echo "连接服务器在网络设置页 http://$ip:8001 的「连接服务器」中添加与开关"
 }
 
 update() {
@@ -198,7 +203,7 @@ menu() {
   fi
   chosen=" $(tr -d '"' <<<"$chosen") "
 
-  # 只动勾选状态变了的；勾着但没在跑（比如启动失败）的也再开一次
+  # 只处理勾选状态有变化的服务；已勾选但未运行（如启动失败）的也重新开启
   for row in "${SERVICES[@]}"; do
     name=$(field "$row" 1)
     unit=$(field "$row" 3)

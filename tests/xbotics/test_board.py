@@ -34,9 +34,6 @@ def load(name: str):
 def tunnel(tmp_path, monkeypatch):
     mod = load("xbotics_tunnel")
     monkeypatch.setattr(mod, "CONF_DIR", tmp_path)
-    monkeypatch.setattr(mod, "CONFIG", tmp_path / "tunnel.json")
-    monkeypatch.setattr(mod, "KEY_FILE", tmp_path / "tunnel_key")
-    monkeypatch.setattr(mod, "KNOWN_HOSTS", tmp_path / "known_hosts")
     return mod
 
 
@@ -141,14 +138,18 @@ def test_upgrade_is_idempotent_and_drops_deps_the_template_stopped_managing():
 def test_restart_plan():
     running = {"xbotics-provision", "xbotics-jupyter", "ttyd", "xbotics-hardware-check"}
     # 什么都没变：一个都不重启
-    assert plan_restarts(running, set(), lerobot_changed=False) == []
+    assert plan_restarts(running, set(), False, []) == []
     # LeRobot 换了版本：在跑的、跑 LeRobot 代码的才重启；没在跑的网页标定不去拉起
-    assert plan_restarts(running, set(), lerobot_changed=True) == [
+    assert plan_restarts(running, set(), True, []) == [
         "xbotics-jupyter",
         "xbotics-hardware-check",
     ]
-    # 文件改了：只重启在跑的
-    assert plan_restarts(running, {"xbotics-provision", "xbotics-tunnel"}, False) == ["xbotics-provision"]
+    # 文件改了：只重启在跑的；隧道程序改了，正在运行的各隧道实例都重启
+    assert plan_restarts(running, {"xbotics-provision", "xbotics-tunnel"}, False, ["xbotics-tunnel@2"]) == [
+        "xbotics-provision",
+        "xbotics-tunnel@2",
+    ]
+    assert plan_restarts(running, {"xbotics-provision"}, False, ["xbotics-tunnel@2"]) == ["xbotics-provision"]
 
 
 @pytest.mark.parametrize(
@@ -176,22 +177,28 @@ def test_bootstrap_points_lerobot_at_the_ref(tmp_path, ref, source):
 
 
 def test_ssh_command_password_and_key(tunnel):
-    cfg = {"host": "srv", "port": 2222, "user": "u", "auth": "password", "forwards": tunnel.DEFAULT_FORWARDS}
-    cmd = tunnel.ssh_command(cfg)
+    cfg = {"host": "srv", "port": 2222, "user": "u", "auth": "password", "forwards": tunnel.PRESET_FORWARDS}
+    cmd = tunnel.ssh_command("1", cfg)
     assert cmd[-1] == "u@srv" and cmd[cmd.index("-p") + 1] == "2222"
     assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "-L"] == [
         "0.0.0.0:8080:127.0.0.1:8080",
         "0.0.0.0:6006:127.0.0.1:6006",
     ]
     assert "PubkeyAuthentication=no" in cmd and "-i" not in cmd
-    key = tunnel.ssh_command({**cfg, "auth": "key"})
-    assert key[key.index("-i") + 1] == str(tunnel.KEY_FILE) and "PreferredAuthentications=publickey" in key
+    key = tunnel.ssh_command("1", {**cfg, "auth": "key"})
+    assert (
+        key[key.index("-i") + 1] == str(tunnel.key_path("1")) and "PreferredAuthentications=publickey" in key
+    )
+    # 每台服务器的指纹分开保存，一台重装不影响另一台
+    assert f"UserKnownHostsFile={tunnel.known_hosts_path('1')}" in cmd
+    with pytest.raises(KeyError):  # 配置缺键直接报错，不拿默认值顶上
+        tunnel.ssh_command("1", {k: v for k, v in cfg.items() if k != "port"})
 
 
 def test_askpass_answers_password_or_passphrase(tunnel):
-    tunnel.CONFIG.write_text('{"password": "pw", "passphrase": "pp"}')
-    assert tunnel.askpass("u@srv's password: ") == "pw"
-    assert tunnel.askpass("Enter passphrase for key '/etc/xbotics/tunnel_key': ") == "pp"
+    tunnel.config_path("2").write_text('{"password": "pw", "passphrase": "pp"}')
+    assert tunnel.askpass("2", "u@srv's password: ") == "pw"
+    assert tunnel.askpass("2", "Enter passphrase for key '/etc/xbotics/tunnels/2.key': ") == "pp"
 
 
 FWD = [{"name": "TB", "local": "6006", "remote": "6006"}]
@@ -199,7 +206,7 @@ FWD = [{"name": "TB", "local": "6006", "remote": "6006"}]
 
 def test_parse_tunnel_validates_each_field(provision):
     ok = {"host": "srv", "user": "u", "password": "pw", "forwards": FWD}
-    assert provision.parse_tunnel(ok, {})["forwards"][0] == {
+    assert provision.parse_tunnel(ok, {}, set())["forwards"][0] == {
         "name": "TB",
         "local": 6006,
         "remote_host": "127.0.0.1",
@@ -218,26 +225,34 @@ def test_parse_tunnel_validates_each_field(provision):
         ({**ok, "auth": "key", "key": "ssh-ed25519 AAAA… 公钥"}, "不是私钥"),
     ]:
         with pytest.raises(ValueError, match=word):
-            provision.parse_tunnel(bad, {})
+            provision.parse_tunnel(bad, {}, set())
+
+
+def test_a_board_port_cannot_be_mapped_by_two_servers(provision):
+    body = {"host": "train", "user": "u", "password": "pw", "forwards": FWD}
+    with pytest.raises(ValueError, match="另一台服务器"):
+        provision.parse_tunnel(body, {}, {6006})
+    assert provision.parse_tunnel(body, {}, {8080})["name"] == "train"  # 没填名称时用地址
 
 
 def test_parse_tunnel_keeps_saved_password_only_for_same_login(provision):
     old = {"host": "srv", "user": "u", "password": "saved"}
     body = {"host": "srv", "user": "u", "password": "", "forwards": FWD}
-    assert provision.parse_tunnel(body, old)["password"] == "saved"
+    assert provision.parse_tunnel(body, old, set())["password"] == "saved"
     with pytest.raises(ValueError, match="密码"):
-        provision.parse_tunnel({**body, "host": "other"}, old)
+        provision.parse_tunnel({**body, "host": "other"}, old, set())
 
 
-def test_parse_tunnel_remote_host_and_saved_key(provision, tunnel):
-    tunnel.KEY_FILE.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+def test_parse_tunnel_remote_host_and_saved_key(provision):
     body = {
         "host": "srv",
         "user": "u",
         "auth": "key",
         "forwards": [{"local": "9000", "remote_host": "10.0.0.5", "remote": "80"}],
     }
-    cfg = provision.parse_tunnel(body, {"host": "srv", "user": "u", "auth": "key"})
+    cfg = provision.parse_tunnel(
+        body, {"host": "srv", "user": "u", "auth": "key", "has_key_file": True}, set()
+    )
     assert "_key" not in cfg and cfg["forwards"][0]["remote_host"] == "10.0.0.5"
 
 
@@ -248,13 +263,13 @@ def test_specific_key_errors_win_over_the_permission_denied_that_follows(provisi
         "u@srv: Permission denied (publickey).\n"
     )
     monkeypatch.setattr(provision.subprocess, "run", lambda *a, **k: type("P", (), {"stdout": out})())
-    assert "口令不对" in provision.tunnel_error()
+    assert "口令不对" in provision.tunnel_error("1")
 
 
 def test_forward_failures_are_not_tunnel_errors(provision, monkeypatch):
     out = "隧道：0.0.0.0:8080 经 u@srv\nchannel 2: open failed: connect failed: Connection refused\n"
     monkeypatch.setattr(provision.subprocess, "run", lambda *a, **k: type("P", (), {"stdout": out})())
-    assert provision.tunnel_error() == ""
+    assert provision.tunnel_error("1") == ""
 
 
 @pytest.mark.parametrize(
@@ -271,7 +286,7 @@ def test_forward_failures_are_not_tunnel_errors(provision, monkeypatch):
 def test_tunnel_errors_are_translated(provision, monkeypatch, line, word):
     out = f"隧道：0.0.0.0:6006 经 u@srv\n{line}\n"
     monkeypatch.setattr(provision.subprocess, "run", lambda *a, **k: type("P", (), {"stdout": out})())
-    assert word in provision.tunnel_error()
+    assert word in provision.tunnel_error("1")
 
 
 def free_port() -> int:
@@ -350,7 +365,7 @@ def test_every_board_file_is_tracked_by_git():
 
 def test_tunnel_stops_retrying_after_an_auth_failure():
     """认证失败的退出码要与服务里的 RestartPreventExitStatus 对上，否则 systemd 照样每 5 秒拿错密码去试。"""
-    unit = (PROVISION / "xbotics-tunnel.service").read_text()
+    unit = (PROVISION / "xbotics-tunnel@.service").read_text()
     tunnel_mod = load("xbotics_tunnel")
     assert f"RestartPreventExitStatus={tunnel_mod.AUTH_FAILED}" in unit
 
@@ -363,3 +378,27 @@ def test_upgrade_keeps_the_layout_of_values_that_did_not_change():
     new = render_env_pyproject(TEMPLATE, without_marker)
     assert new.startswith(without_marker.rstrip("\n"))  # 只在末尾补上 [tool.xbotics]，前面一个字都不动
     assert 'override-dependencies = [\n    "torch==2.9.1",' in new
+
+
+def test_new_server_gets_the_smallest_free_number(provision, tunnel):
+    for tid in ("1", "3"):
+        tunnel.config_path(tid).write_text("{}")
+    assert tunnel.tunnel_ids() == ["1", "3"]
+    assert provision.new_tunnel_id() == "2"
+
+
+def test_background_failure_releases_the_running_state(provision):
+    """后台操作抛出未预料的异常时，状态要收尾成失败，否则之后所有操作都被「上一个操作尚未完成」挡住。"""
+    import time as _time
+
+    def boom():
+        provision.STATUS.set_job("wifi", "running", "正在连接…")
+        raise TimeoutError("nmcli 超时")
+
+    provision.in_background(boom)
+    for _ in range(50):
+        if provision.STATUS.snapshot()["job"]["state"] != "running":
+            break
+        _time.sleep(0.02)
+    job = provision.STATUS.snapshot()["job"]
+    assert job["state"] == "failed" and "nmcli 超时" in job["message"]

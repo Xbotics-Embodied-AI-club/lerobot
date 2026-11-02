@@ -21,7 +21,9 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -46,7 +48,7 @@ FILES = [
     ("provision/index.html", "/opt/xbotics/provision/index.html", 0o644, "xbotics-provision"),
     ("provision/xbotics-captive.conf", "/etc/NetworkManager/dnsmasq-shared.d/xbotics-captive.conf", 0o644, "xbotics-provision"),
     ("provision/xbotics-provision.service", SYSTEMD / "xbotics-provision.service", 0o644, "xbotics-provision"),
-    ("provision/xbotics-tunnel.service", SYSTEMD / "xbotics-tunnel.service", 0o644, "xbotics-tunnel"),
+    ("provision/xbotics-tunnel@.service", SYSTEMD / "xbotics-tunnel@.service", 0o644, "xbotics-tunnel"),
     ("config/xbotics-config", "/usr/local/bin/xbotics-config", 0o755, ""),
     ("config/xbotics-hardware-check.service", SYSTEMD / "xbotics-hardware-check.service", 0o644, "xbotics-hardware-check"),
     ("config/xbotics-calibrate-web.service", SYSTEMD / "xbotics-calibrate-web.service", 0o644, "xbotics-calibrate-web"),
@@ -98,10 +100,6 @@ def req_name(req: str) -> str:
     return re.sub(r"[-_.]+", "-", m.group(1)).lower() if m else req
 
 
-def toml_inline(table: dict) -> str:
-    return "{ " + ", ".join(f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in table.items()) + " }"
-
-
 REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?(.*)$", re.S)
 
 
@@ -115,26 +113,26 @@ def merge_extras(template_req: str, old_req: str) -> str:
     return f"{t.group(1)}[{','.join(extras)}]{t.group(3)}"
 
 
-def render_env_pyproject_plain(template: str, old: str) -> str:
-    """按模板整份重写，只带上旧文件里的依赖与源。
+def ensure_tomlkit(template: str) -> None:
+    """环境中没有 tomlkit（还没装 xbotics_tools 组的老环境）时，用 uv add 给 lerobot 补上可选组，同步后重新执行安装。
 
-    没有 tomlkit 时用：还没装 xbotics_tools 组的老环境，只在第一次升级时走这里，之后环境里就有 tomlkit 了。
+    uv add 只改这一条依赖、保留文件其余内容；补上的 xbotics_tools 组带来 tomlkit，重新执行后按逐键修改的方式升级。
     """
-    t, o = tomllib.loads(template), tomllib.loads(old)
-    deps = t["project"]["dependencies"]
-    names = {req_name(d) for d in deps}
-    extra = [d for d in o.get("project", {}).get("dependencies", []) if req_name(d) not in names]
-    text = re.sub(
-        r"^dependencies = \[.*\]$",
-        lambda _: "dependencies = " + json.dumps(deps + extra, ensure_ascii=False),
-        template,
-        count=1,
-        flags=re.M,
-    )
-    for name, src in o.get("tool", {}).get("uv", {}).get("sources", {}).items():
-        if name != "lerobot":
-            text += f"{json.dumps(name)} = {toml_inline(src)}\n"
-    return text
+    try:
+        import tomlkit  # noqa: F401
+    except ImportError:
+        old = tomllib.loads((ENV_DIR / "pyproject.toml").read_text())
+        template_lerobot = next(
+            d for d in tomllib.loads(template)["project"]["dependencies"] if req_name(d) == "lerobot"
+        )
+        old_lerobot = next(
+            (d for d in old["project"]["dependencies"] if req_name(d) == "lerobot"), template_lerobot
+        )
+        say("LeRobot 环境：补上 xbotics_tools 组…")
+        env = {**os.environ, "HOME": str(ROOT_HOME)}
+        run(str(UV), "add", "--no-sync", merge_extras(template_lerobot, old_lerobot), cwd=ENV_DIR, env=env)
+        run(str(UV), "sync", cwd=ENV_DIR, env=env)
+        os.execv(sys.executable, [sys.executable, "-m", "lerobot.xbotics.board", "install"])
 
 
 def render_env_pyproject(template: str, old: str | None) -> str:
@@ -147,10 +145,8 @@ def render_env_pyproject(template: str, old: str | None) -> str:
     """
     if old is None:
         return template
-    try:
-        import tomlkit
-    except ImportError:
-        return render_env_pyproject_plain(template, old)
+    import tomlkit
+
     t = tomllib.loads(template)
     doc = tomlkit.parse(old)
     template_deps = t["project"]["dependencies"]
@@ -188,15 +184,27 @@ def render_env_pyproject(template: str, old: str | None) -> str:
 
 
 def sync_env() -> None:
+    """按模板升级端侧板环境的 pyproject，有变化时重新同步依赖。
+
+    同步失败时把 pyproject 恢复原样再抛出：否则文件已是新版，重试时判断为「已是最新」而跳过同步，缺的依赖补不上。
+    """
+    template = (BOARD / "board_env/pyproject.toml").read_text()
     dest = ENV_DIR / "pyproject.toml"
     old = dest.read_text() if dest.exists() else None
-    new = render_env_pyproject((BOARD / "board_env/pyproject.toml").read_text(), old)
+    if old is not None:
+        ensure_tomlkit(template)
+    new = render_env_pyproject(template, old)
     if old == new:
         say("LeRobot 环境：pyproject 已是最新")
         return
     write_if_changed(dest, new.encode(), 0o644)
     say("LeRobot 环境：pyproject 已按新版更新，正在重新同步依赖…")
-    run(str(UV), "sync", cwd=ENV_DIR, env={**os.environ, "HOME": str(ROOT_HOME)})
+    try:
+        run(str(UV), "sync", cwd=ENV_DIR, env={**os.environ, "HOME": str(ROOT_HOME)})
+    except subprocess.CalledProcessError:
+        if old is not None:
+            write_if_changed(dest, old.encode(), 0o644)
+        raise
 
 
 # ---------- 生成的配置 ----------
@@ -215,6 +223,7 @@ def ttyd_options() -> bool:
 
 
 def jupyter_config() -> bool:
+    """写入 JupyterLab 的服务配置（8003、bash 终端、只认密码）；已设置的密码哈希保留，没有时用默认密码。"""
     path = ROOT_HOME / ".jupyter/jupyter_server_config.json"
     old = json.loads(path.read_text()) if path.exists() else {}
     hashed = old.get("PasswordIdentityProvider", {}).get("hashed_password")
@@ -291,6 +300,27 @@ def bashrc() -> None:
         say("已设置登录后自动进入 LeRobot 环境")
 
 
+def board_hostname() -> bool:
+    """主机名统一为 xbotics-XXXX（后四位同热点名，取自 Wi-Fi 网卡地址），有改动时返回 True。
+
+    厂家镜像的默认主机名带厂家名，会出现在终端提示符与局域网的 .local 名字里；后四位每块板不同，
+    同一局域网里有几块端侧板时 .local 名字也不冲突。已经是 xbotics- 开头的不再修改。
+    """
+    current = socket.gethostname()
+    if current.startswith("xbotics-"):
+        return False
+    mac = Path("/sys/class/net/wlan0/address").read_text().strip().replace(":", "")
+    name = f"xbotics-{mac[-4:]}"
+    run("hostnamectl", "set-hostname", name)
+    hosts = Path("/etc/hosts")
+    lines = [line for line in hosts.read_text().splitlines() if not line.startswith("127.0.1.1")]
+    hosts.write_text("\n".join([*lines, f"127.0.1.1\t{name}"]) + "\n")
+    if is_active("avahi-daemon"):
+        run("systemctl", "restart", "avahi-daemon")
+    say(f"主机名：{current} → {name}（局域网中可用 {name}.local 访问）")
+    return True
+
+
 # ---------- 主流程 ----------
 
 
@@ -321,17 +351,39 @@ def is_active(unit: str) -> bool:
     return systemctl("is-active", unit).stdout.strip() == "active"
 
 
-def plan_restarts(running: set[str], changed_units: set[str], lerobot_changed: bool) -> list[str]:
-    """正在运行的服务中需要重启的：文件有改动的，以及 LeRobot 版本变化时运行 LeRobot 代码的服务。"""
-    units = ("xbotics-maxfreq", "xbotics-provision", *WEB_SERVICES, "xbotics-tunnel")
-    return [
+def running_tunnels() -> list[str]:
+    """正在运行的隧道实例（每台服务器一个 xbotics-tunnel@<编号>）。"""
+    out = systemctl("list-units", "--state=active", "--plain", "--no-legend", "xbotics-tunnel@*").stdout
+    return [line.split()[0].removesuffix(".service") for line in out.splitlines() if line.strip()]
+
+
+def remove_obsolete() -> None:
+    """删除旧版留下、现已不用的文件：单台服务器的隧道服务（已改为每台服务器一个实例）。"""
+    old_unit = SYSTEMD / "xbotics-tunnel.service"
+    if old_unit.exists():
+        systemctl("disable", "--now", "xbotics-tunnel")
+        old_unit.unlink()
+        for name in ("tunnel.json", "tunnel_key", "tunnel_known_hosts", "tunnel_askpass"):
+            (Path("/etc/xbotics") / name).unlink(missing_ok=True)
+        run("systemctl", "daemon-reload")
+        say("已移除旧版的单台服务器隧道（如需要，请在网络设置页重新添加服务器）")
+
+
+def plan_restarts(
+    running: set[str], changed_units: set[str], lerobot_changed: bool, tunnels: list[str]
+) -> list[str]:
+    """正在运行的服务中需要重启的：文件有改动的，LeRobot 版本变化时运行 LeRobot 代码的服务，隧道程序改动时的各隧道实例。"""
+    units = ("xbotics-maxfreq", "xbotics-provision", *WEB_SERVICES)
+    plan = [
         u
         for u in units
         if u in running and (u in changed_units or (lerobot_changed and u in LEROBOT_SERVICES))
     ]
+    return plan + (tunnels if "xbotics-tunnel" in changed_units else [])
 
 
 def install() -> None:
+    """安装或升级端侧板上的全部内容；首次安装开启五个网页服务，升级保持现有开关，只重启有改动的服务。"""
     if os.geteuid() != 0:
         raise SystemExit(
             "须以 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
@@ -344,6 +396,7 @@ def install() -> None:
     say("首次安装" if first else "升级：保持现有的服务开关，仅重启有改动的服务")
     apt_install()
     sync_env()
+    renamed = board_hostname()
 
     changed_units: set[str] = set()
     for src, dest, mode, units in FILES:
@@ -366,9 +419,12 @@ def install() -> None:
         run("systemctl", "set-default", "multi-user.target")
         say("已设置开机不进入桌面（重启后生效）")
 
+    remove_obsolete()
     always_on = ("xbotics-maxfreq", "xbotics-provision")
-    running = {u for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel") if is_active(u)}
-    to_restart = plan_restarts(running, changed_units, lerobot_changed)
+    running = {u for u in (*always_on, *WEB_SERVICES) if is_active(u)}
+    if renamed:
+        changed_units.add("xbotics-provision")  # 页面上显示的主机名与 .local 地址要更新
+    to_restart = plan_restarts(running, changed_units, lerobot_changed, running_tunnels())
     for unit in always_on:
         run("systemctl", "enable", "--now", unit, capture_output=True)
     if first:
@@ -376,8 +432,6 @@ def install() -> None:
             run("systemctl", "enable", "--now", unit, capture_output=True)
         say("已开启五个网页服务（8002–8006），之后可用 xbotics-config 开关")
 
-    MARKER.parent.mkdir(parents=True, exist_ok=True)
-    MARKER.write_text(version + "\n")
     if to_restart:
         # 放在单独的单元中、延后 3 秒执行：在网页终端或 VS Code 终端中升级时，重启这些服务不会中断本进程
         run(
@@ -390,4 +444,7 @@ def install() -> None:
             capture_output=True,
         )
         say(f"3 秒后重启：{' '.join(to_restart)}（这些网页会短暂断开，刷新即可）")
+    # 安排好重启之后才记下安装状态：前面任何一步失败，重试时仍按「LeRobot 版本变化」处理，该重启的服务不会漏掉
+    MARKER.parent.mkdir(parents=True, exist_ok=True)
+    MARKER.write_text(version + "\n")
     say("安装完成：用 xbotics-config status 查看各服务状态")

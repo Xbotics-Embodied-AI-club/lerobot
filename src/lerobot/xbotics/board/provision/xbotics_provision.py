@@ -9,7 +9,7 @@ DHCP / DNS 用 NetworkManager 共享模式自带的 dnsmasq；dnsmasq-shared.d �
 页面另有「连接服务器」一栏：填写服务器地址、账号与密码（或私钥），端侧板通过 SSH 隧道将服务器上的推理服务、
 TensorBoard 等端口映射到自身的 0.0.0.0，隧道实现见同目录的 xbotics_tunnel.py。
 
-已在 ZTL A566（RK3566 + AIC8800，厂家 Ubuntu 22.04、NetworkManager 1.36）上实测；
+已在星禾套件端侧板（RK3566 + AIC8800，Ubuntu 22.04、NetworkManager 1.36）上实测；
 随维护版 LeRobot 安装与升级（python -m lerobot.xbotics.board install），见 XBOTICS.md。
 """
 
@@ -345,7 +345,7 @@ TUNNEL_ERRORS = (
     ("Connection refused", "服务器拒绝连接：SSH 端口不正确，或服务器未开启 SSH 服务"),
     ("Connection timed out", "连不上服务器：地址不正确，或端侧板所在网络无法访问该服务器"),
     ("No route to host", "连不上服务器：端侧板所在网络无法访问该服务器"),
-    ("Network is unreachable", "端侧板尚未联网：请先在上方连接 Wi-Fi 或网线"),
+    ("Network is unreachable", "端侧板尚未联网：请先在「Wi-Fi」或「网线」标签中连接网络"),
     ("cannot listen to port", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
     ("Address already in use", "端侧板上的端口已被其他程序占用，请更换端侧板端口"),
     (
@@ -363,10 +363,10 @@ TUNNEL_ERRORS = (
 )
 
 
-def tunnel_error() -> str:
-    """最近一两次启动中 ssh 报告的错误，转成中文说明；没有错误时返回空串。"""
+def tunnel_error(tid: str) -> str:
+    """这台服务器的隧道最近一两次启动中 ssh 报告的错误，转成中文说明；没有错误时返回空串。"""
     proc = subprocess.run(
-        ["journalctl", "-u", tunnel.UNIT, "-n", "40", "-o", "cat", "--no-pager"],
+        ["journalctl", "-u", tunnel.unit(tid), "-n", "40", "-o", "cat", "--no-pager"],
         capture_output=True, text=True, timeout=10, check=False,
     )  # fmt: skip
     lines = proc.stdout.splitlines()
@@ -401,44 +401,54 @@ def probe_forward(port: int) -> str:
         return "down"
 
 
-class Tunnel:
-    """连接服务器的隧道：设置与状态。端口探测每 15 秒一次（每次探测都会在服务器上留下一条连接记录）。"""
+class Tunnels:
+    """各台服务器的隧道状态。端口探测每台每 15 秒一次（每次探测都会在服务器上留下一条连接记录）。"""
 
     def __init__(self) -> None:
-        self.probes: dict[int, str] = {}
-        self.probed_at = 0.0
+        self.probes: dict[str, dict[int, str]] = {}
+        self.probed_at: dict[str, float] = {}
 
-    def status(self) -> dict:
-        cfg = tunnel.load_config()
-        _, enabled = systemctl("is-enabled", tunnel.UNIT)
-        _, active = systemctl("is-active", tunnel.UNIT)
-        forwards = cfg.get("forwards") or tunnel.DEFAULT_FORWARDS
-        if active == "active" and time.time() - self.probed_at > 15:
-            self.probes = {int(f["local"]): probe_forward(int(f["local"])) for f in forwards}
-            self.probed_at = time.time()
+    def status(self, tid: str) -> dict:
+        cfg = tunnel.load_config(tid)
+        _, enabled = systemctl("is-enabled", tunnel.unit(tid))
+        _, active = systemctl("is-active", tunnel.unit(tid))
+        if active == "active" and time.time() - self.probed_at.get(tid, 0.0) > 15:
+            self.probes[tid] = {int(f["local"]): probe_forward(int(f["local"])) for f in cfg["forwards"]}
+            self.probed_at[tid] = time.time()
         elif active != "active":
-            self.probes = {}
+            self.probes.pop(tid, None)
         return {
-            "configured": bool(cfg.get("host")),
-            "host": cfg.get("host", ""),
-            "port": cfg.get("port", 22),
-            "user": cfg.get("user", ""),
-            "auth": cfg.get("auth", "password"),
+            "id": tid,
+            "name": cfg["name"],
+            "host": cfg["host"],
+            "port": cfg["port"],
+            "user": cfg["user"],
+            "auth": cfg["auth"],
             "has_password": bool(cfg.get("password")),
-            "has_key": tunnel.KEY_FILE.exists(),
-            "forwards": forwards,
+            "has_key": tunnel.key_path(tid).exists(),
+            "forwards": cfg["forwards"],
             "enabled": enabled == "enabled",
             "state": active,
-            "probes": {str(k): v for k, v in self.probes.items()},
-            "error": tunnel_error() if enabled == "enabled" else "",
+            "probes": {str(k): v for k, v in self.probes.get(tid, {}).items()},
+            "error": tunnel_error(tid) if enabled == "enabled" else "",
+        }
+
+    def all(self) -> dict:
+        return {
+            "servers": [self.status(tid) for tid in tunnel.tunnel_ids()],
+            "presets": tunnel.PRESET_FORWARDS,
         }
 
 
-TUNNEL = Tunnel()
+TUNNELS = Tunnels()
 
 
-def parse_tunnel(body: dict, old: dict) -> dict:
-    """把页面上填写的隧道设置校验成配置；哪一项有误，报错就指明哪一项。未重新填写的密码与私钥沿用原值。"""
+def parse_tunnel(body: dict, old: dict, ports_in_use: set[int]) -> dict:
+    """把页面上填写的一台服务器的设置校验成配置；哪一项有误，报错就指明哪一项。
+
+    未重新填写的密码与私钥沿用原值。ports_in_use 是其他服务器已占用的端侧板端口，同一端口不能映射两次。
+    """
+    name = str(body.get("name", "")).strip()
     host = str(body.get("host", "")).strip()
     user = str(body.get("user", "")).strip()
     if not host:
@@ -450,7 +460,7 @@ def parse_tunnel(body: dict, old: dict) -> dict:
         raise ValueError(f"SSH 端口「{port}」应为 1 到 65535 之间的整数，通常为 22")
     auth = "key" if body.get("auth") == "key" else "password"
     same_login = old.get("host") == host and old.get("user") == user
-    cfg = {"host": host, "port": int(port), "user": user, "auth": auth}
+    cfg = {"name": name or host, "host": host, "port": int(port), "user": user, "auth": auth}
     if auth == "password":
         password = body.get("password") or (old.get("password") if same_login else "")
         if not password:
@@ -462,7 +472,7 @@ def parse_tunnel(body: dict, old: dict) -> dict:
             raise ValueError(
                 "这不是私钥：请粘贴完整私钥，从 -----BEGIN … PRIVATE KEY----- 到 -----END … PRIVATE KEY-----"
             )
-        if not key and not (same_login and tunnel.KEY_FILE.exists()):
+        if not key and not (same_login and old.get("has_key_file")):
             raise ValueError("请填写私钥")
         if key:
             cfg["_key"] = key + "\n"
@@ -480,6 +490,10 @@ def parse_tunnel(body: dict, old: dict) -> dict:
         if local in seen or local in PORTS or 8001 <= local <= 8007 or local in (9090, 9091):
             raise ValueError(
                 f"第 {i} 条映射：端侧板端口 {local} 已被占用（8001–8007 为端侧板自带的网页，9090、9091 为录数据预览）"
+            )
+        if local in ports_in_use:
+            raise ValueError(
+                f"第 {i} 条映射：端侧板端口 {local} 已被另一台服务器的映射占用，请更换端侧板端口"
             )
         seen.add(local)
         remote_host = str(f.get("remote_host") or "127.0.0.1").strip()
@@ -499,44 +513,88 @@ def write_private(path: Path, text: str) -> None:
     os.chmod(path, 0o600)
 
 
+def new_tunnel_id() -> str:
+    used = {int(t) for t in tunnel.tunnel_ids() if t.isdigit()}
+    return str(next(n for n in range(1, len(used) + 2) if n not in used))
+
+
 def save_tunnel(body: dict) -> None:
-    old = tunnel.load_config()
+    """保存一台服务器的设置并（重新）连接；body 带 id 时修改已有的服务器，不带时新增一台。"""
+    tid = str(body.get("id") or "")
+    if tid and tid not in tunnel.tunnel_ids():
+        STATUS.set_job("tunnel", "failed", "这台服务器的设置已被删除，请刷新页面")
+        return
+    old = {**tunnel.load_config(tid), "has_key_file": tunnel.key_path(tid).exists()} if tid else {}
+    ports_in_use = {
+        int(f["local"])
+        for other in tunnel.tunnel_ids()
+        if other != tid
+        for f in tunnel.load_config(other)["forwards"]
+    }
     try:
-        cfg = parse_tunnel(body, old)
+        cfg = parse_tunnel(body, old, ports_in_use)
     except ValueError as e:
         STATUS.set_job("tunnel", "failed", str(e))
         return
-    STATUS.set_job("tunnel", "running", f"正在连接 {cfg['user']}@{cfg['host']}…")
+    tid = tid or new_tunnel_id()
+    STATUS.set_job("tunnel", "running", f"正在连接 {cfg['name']}（{cfg['user']}@{cfg['host']}）…")
     tunnel.CONF_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = cfg.pop("_key", None)
     if key:
-        write_private(tunnel.KEY_FILE, key)
+        write_private(tunnel.key_path(tid), key)
     # 每次保存都重新识别服务器指纹：更换服务器或服务器重装系统后，点击一次「保存并连接」即可连接
-    tunnel.KNOWN_HOSTS.unlink(missing_ok=True)
-    write_private(tunnel.CONFIG, json.dumps(cfg, ensure_ascii=False, indent=2))
-    systemctl("enable", tunnel.UNIT)
-    code, out = systemctl("restart", tunnel.UNIT)
+    tunnel.known_hosts_path(tid).unlink(missing_ok=True)
+    write_private(tunnel.config_path(tid), json.dumps(cfg, ensure_ascii=False, indent=2))
+    systemctl("enable", tunnel.unit(tid))
+    code, out = systemctl("restart", tunnel.unit(tid))
     if code != 0:
         STATUS.set_job("tunnel", "failed", f"隧道服务未能启动：{out}")
         return
-    TUNNEL.probed_at = 0.0
+    TUNNELS.probed_at.pop(tid, None)
     # 登录与建立转发通常需要两三秒；等待端侧板上的端口开始监听，最多 15 秒，超时则读取报错
     for _ in range(15):
         time.sleep(1)
         if all(probe_forward(f["local"]) != "down" for f in cfg["forwards"]):
             names = "、".join(f"{f['name']}（{f['local']}）" for f in cfg["forwards"])
-            STATUS.set_job("tunnel", "done", f"已连接 {cfg['host']}：{names} 已映射到端侧板")
+            STATUS.set_job("tunnel", "done", f"已连接 {cfg['name']}：{names} 已映射到端侧板")
             return
-    STATUS.set_job("tunnel", "failed", tunnel_error() or "隧道尚未连接，请稍后查看状态")
+    STATUS.set_job("tunnel", "failed", tunnel_error(tid) or "隧道尚未连接，请稍后查看状态")
 
 
-def stop_tunnel() -> None:
-    systemctl("disable", "--now", tunnel.UNIT)
-    STATUS.set_job("tunnel", "done", "已断开与服务器的连接，开机不再自动连接")
+def stop_tunnel(tid: str) -> None:
+    systemctl("disable", "--now", tunnel.unit(tid))
+    name = tunnel.load_config(tid).get("name", tid)
+    STATUS.set_job("tunnel", "done", f"已断开与 {name} 的连接，开机不再自动连接")
+
+
+def delete_tunnel(tid: str) -> None:
+    name = tunnel.load_config(tid).get("name", tid)
+    systemctl("disable", "--now", tunnel.unit(tid))
+    for path in (
+        tunnel.config_path(tid),
+        tunnel.key_path(tid),
+        tunnel.known_hosts_path(tid),
+        tunnel.CONF_DIR / f"{tid}.askpass",
+    ):
+        path.unlink(missing_ok=True)
+    TUNNELS.probes.pop(tid, None)
+    STATUS.set_job("tunnel", "done", f"已删除服务器 {name}")
 
 
 def in_background(fn, *args) -> None:
-    threading.Thread(target=fn, args=args, daemon=True).start()
+    """在后台线程执行一次页面操作；出现未预料的异常时写入日志，并把状态置为失败。
+
+    否则状态会停在「进行中」，之后所有操作都被「上一个操作尚未完成」挡住。
+    """
+
+    def task() -> None:
+        try:
+            fn(*args)
+        except Exception as e:  # noqa: BLE001 —— 任何异常都要收尾成「失败」，页面才能继续操作
+            print(f"{fn.__name__} 出错：{e!r}", file=sys.stderr, flush=True)
+            STATUS.set_job(STATUS.snapshot()["job"]["kind"] or "error", "failed", f"操作失败：{e}")
+
+    threading.Thread(target=task, daemon=True).start()
 
 
 def board_hosts() -> set[str]:
@@ -568,8 +626,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(STATUS.snapshot())
         if path == "/api/networks":
             return self.send_json(scan_networks())
-        if path == "/api/tunnel":
-            return self.send_json(TUNNEL.status())
+        if path == "/api/tunnels":
+            return self.send_json(TUNNELS.all())
         if path in ("/", "/index.html") and host in board_hosts():
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -596,7 +654,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/wifi":
             ssid = (body.get("ssid") or "").strip()
             if not ssid:
-                STATUS.set_job("wifi", "failed", "请先在上方列表中选择一个 Wi-Fi，或手动填写名称")
+                STATUS.set_job("wifi", "failed", "请先在列表中选择一个 Wi-Fi，或手动填写名称")
             else:
                 in_background(connect_wifi, ssid, body.get("password") or "")
         elif self.path == "/api/wifi/forget":
@@ -605,10 +663,13 @@ class Handler(BaseHTTPRequestHandler):
             STATUS.set_job("wifi", "done" if code == 0 else "failed", f"已删除 {name}" if code == 0 else err)
         elif self.path == "/api/wired":
             in_background(apply_wired, body)
-        elif self.path == "/api/tunnel":
+        elif self.path == "/api/tunnels/save":
             in_background(save_tunnel, body)
-        elif self.path == "/api/tunnel/stop":
-            in_background(stop_tunnel)
+        elif self.path in ("/api/tunnels/stop", "/api/tunnels/delete"):
+            tid = str(body.get("id") or "")
+            if tid not in tunnel.tunnel_ids():
+                return self.send_json({"error": "没有这台服务器的设置"}, 404)
+            in_background(stop_tunnel if self.path.endswith("/stop") else delete_tunnel, tid)
         else:
             return self.send_json({"error": "接口不存在"}, 404)
         return self.send_json({"ok": True})

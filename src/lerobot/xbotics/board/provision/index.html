@@ -41,11 +41,20 @@
 
   main { max-width: 820px; margin: -42px auto 0; padding: 0 12px 96px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  @media (max-width: 640px) { .cards { grid-template-columns: 1fr; } .hostchips { display: none; } }
+  @media (max-width: 640px) {
+    /* 手机上三块状态卡收成一行三列的紧凑形式，只留标题与状态，把屏幕留给下面的标签页 */
+    .cards { gap: 6px; }
+    .card { padding: 10px 8px; }
+    .card .kv { display: none; }
+    .card-top { flex-direction: column; gap: 6px; margin: 0; text-align: center; }
+    .card-top .ico { width: 30px; height: 30px; }
+    .card .pill { margin: 0; font-size: 11.5px; padding: 1px 7px; }
+    .hostchips { display: none; }
+  }
   .card, section { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
   .card { padding: 14px 14px 12px; }
   .card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--blue-soft); color: var(--blue); }
+  .ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--blue-soft); color: var(--blue); flex: none; }
   .card-title { font-weight: 600; }
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13.5px; }
   .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; }
@@ -56,10 +65,26 @@
   .pill.bad { color: var(--bad); background: var(--bad-soft); } .pill.idle { color: var(--idle); background: var(--idle-soft); }
   .pill.run::before { animation: blink 1s infinite; } @keyframes blink { 50% { opacity: .25; } }
 
+  /* 标签：一次只显示一项设置，不必上下滚动 */
+  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 14px; padding: 4px;
+          background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .tabs button { position: relative; border: 0; background: none; font: inherit; font-size: 14.5px; color: var(--muted);
+                 padding: 10px 6px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; }
+  .tabs button svg { width: 18px; height: 18px; }
+  .tabs button.on { background: var(--blue-soft); color: var(--blue); font-weight: 650; }
+  .tabs .dot { width: 7px; height: 7px; border-radius: 50%; position: absolute; top: 8px; right: 10px; }
+  .tabs .dot.ok { background: var(--ok); } .tabs .dot.mid { background: var(--mid); } .tabs .dot.bad { background: var(--bad); }
+  @media (max-width: 520px) {
+    .tabs button { flex-direction: column; gap: 3px; font-size: 12.5px; padding: 8px 2px; }
+    .tabs .dot { top: 6px; right: 14%; }
+  }
+  .panel { display: none; } .panel.on { display: block; }
+
   section { margin-top: 12px; padding: 16px; }
   .sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   h2 { margin: 0; font-size: 16.5px; font-weight: 650; }
-  .sec-note { color: var(--muted); font-size: 13px; margin: -6px 0 12px 44px; }
+  h3 { margin: 0; font-size: 15.5px; font-weight: 650; }
+  .sec-note { color: var(--muted); font-size: 13px; margin: -6px 0 12px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
   .tile { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 11px; border: 1px solid var(--line);
@@ -75,8 +100,9 @@
   .btn { appearance: none; border: 0; border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
          background: var(--blue); color: #fff; display: inline-flex; align-items: center; gap: 8px; justify-content: center; }
   .btn:hover { filter: brightness(1.06); } .btn:disabled { opacity: .45; cursor: default; filter: none; }
-  .btn.ghost { background: var(--blue-soft); color: var(--blue); } .btn.plain { background: transparent; color: var(--muted); padding: 10px 10px; }
+  .btn.ghost { background: var(--blue-soft); color: var(--blue); } .btn.plain { background: transparent; color: var(--muted); }
   .btn.danger { background: var(--bad-soft); color: var(--bad); }
+  .btn.small { padding: 6px 12px; font-size: 13.5px; border-radius: 9px; }
   .btn svg { width: 17px; height: 17px; }
   .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
   @media (max-width: 640px) { .actions .btn:not(.plain) { flex: 1; } }
@@ -97,7 +123,7 @@
   .seg button { border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted); padding: 7px 14px; border-radius: 8px; cursor: pointer; }
   .seg button.on { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(16,24,40,.12); }
 
-  .nets { border: 1px solid var(--line); border-radius: 11px; overflow: hidden; margin: 10px 0 12px; }
+  .nets { border: 1px solid var(--line); border-radius: 11px; overflow: hidden; margin: 10px 0 12px; max-height: 300px; overflow-y: auto; }
   .nets:empty { display: none; }
   .net { display: flex; align-items: center; gap: 10px; padding: 11px 12px; cursor: pointer; border-top: 1px solid var(--line); }
   .net:first-child { border-top: 0; } .net:hover { background: var(--field); } .net.sel { background: var(--blue-soft); }
@@ -108,17 +134,34 @@
   .bars i { width: 4px; border-radius: 1px; background: var(--line); }
   .bars i:nth-child(1) { height: 25%; } .bars i:nth-child(2) { height: 50%; } .bars i:nth-child(3) { height: 75%; } .bars i:nth-child(4) { height: 100%; }
   .bars i.on { background: var(--blue); }
-  .empty { padding: 14px; color: var(--muted); text-align: center; font-size: 14px; }
+  .empty { padding: 18px 12px; color: var(--muted); text-align: center; font-size: 14px; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; font-size: 13px; color: var(--muted); }
   .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--idle-soft); color: var(--text); border-radius: 999px; padding: 3px 4px 3px 10px; }
   .chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 999px; }
   .chip button:hover { background: var(--bad-soft); color: var(--bad); }
 
+  /* 服务器列表：每台一张卡片 */
+  .srv { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+  .srv-top { display: flex; align-items: center; gap: 10px; }
+  .srv-top .ico { width: 30px; height: 30px; border-radius: 9px; }
+  .srv-top .ico svg { width: 17px; height: 17px; }
+  .srv-sub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .srv .actions { margin-top: 10px; }
+  .map { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line); font-size: 13.5px; flex-wrap: wrap; }
+  .map:first-of-type { margin-top: 8px; }
+  .map .route { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .map a { color: var(--blue); font-weight: 600; text-decoration: none; }
+  .tun-err { margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--bad-soft); color: var(--bad); font-size: 13.5px; }
+  .tun-err:empty { display: none; }
+
   .fwd { display: grid; grid-template-columns: 1.4fr 1fr auto 1.2fr auto; gap: 8px; align-items: center; margin-top: 8px; }
   .fwd .arrow { color: var(--muted); }
-  .fwd-head { font-size: 12.5px; color: var(--muted); margin-top: 12px; }
+  .fwd-head { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
   .fwd-head > span:last-child { width: 36px; }
+  .fwd .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 8px; border-radius: 8px; }
+  .fwd .x:hover { background: var(--bad-soft); color: var(--bad); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   /* 手机上：名称独占一行，下一行为「端侧板端口 → 服务器端口」 */
   @media (max-width: 520px) {
     .fwd { grid-template-columns: 1fr auto 1fr auto; padding: 10px; border: 1px solid var(--line); border-radius: 11px; }
@@ -126,19 +169,9 @@
     .fwd-head { display: none; }
     .actions .btn:first-child { flex-basis: 100%; }
   }
-  .fwd .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 8px; border-radius: 8px; }
-  .fwd .x:hover { background: var(--bad-soft); color: var(--bad); }
-  .maps { margin-top: 12px; border: 1px solid var(--line); border-radius: 11px; }
-  .maps:empty { display: none; }
-  .map { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 13.5px; flex-wrap: wrap; }
-  .map:first-child { border-top: 0; }
-  .map .route { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .map a { color: var(--blue); font-weight: 600; text-decoration: none; }
-  .tun-err { margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--bad-soft); color: var(--bad); font-size: 13.5px; }
-  .tun-err:empty { display: none; }
   .hidden { display: none !important; }
 
-  /* 固定在屏幕底部：手机上点击按钮后视线停留在当前一节，无需滚动即可看到结果 */
+  /* 固定在屏幕底部：点击按钮后无需滚动即可看到结果 */
   .toast { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%);
            width: min(780px, calc(100% - 24px)); display: flex; align-items: center; gap: 10px; padding: 12px 14px;
            border-radius: 12px; background: var(--card); box-shadow: 0 8px 30px rgba(16,24,40,.22); cursor: pointer; font-size: 14px;
@@ -164,13 +197,13 @@
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></symbol>
   <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="7" rx="2"/><rect x="3" y="13.5" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
-  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 0 0-5.6 1.5A3 3 0 0 0 4 11a3 3 0 0 0 1.5 5.6A3 3 0 0 0 12 19zM12 5a3 3 0 0 1 5.6 1.5A3 3 0 0 1 20 11a3 3 0 0 1-1.5 5.6A3 3 0 0 1 12 19"/></symbol>
   <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-scan" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5h.01"/></symbol>
   <symbol id="i-load" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
@@ -191,64 +224,75 @@
     <div class="card"><div class="card-top"><div class="ico"><svg><use href="#i-ap"/></svg></div><span class="card-title">本热点</span><span id="ap-pill" class="pill idle">…</span></div><dl class="kv" id="ap"></dl></div>
   </div>
 
-  <section id="links-box" hidden>
-    <div class="sec-head"><div class="ico"><svg><use href="#i-grid"/></svg></div><h2>从你的网络中打开</h2></div>
-    <div class="seg seg-hosts" id="hosts"></div>
-    <div class="tiles" id="links"></div>
-  </section>
+  <nav class="tabs" id="tabs">
+    <button data-tab="wifi"><svg><use href="#i-wifi"/></svg>Wi-Fi</button>
+    <button data-tab="wired"><svg><use href="#i-eth"/></svg>网线</button>
+    <button data-tab="server"><svg><use href="#i-server"/></svg>连接服务器<span class="dot" id="srv-dot"></span></button>
+    <button data-tab="open"><svg><use href="#i-grid"/></svg>打开网页</button>
+  </nav>
 
-  <section>
-    <div class="sec-head"><div class="ico"><svg><use href="#i-wifi"/></svg></div><h2>连接 Wi-Fi</h2></div>
+  <section class="panel" data-panel="wifi">
     <button class="btn ghost" id="scan"><svg><use href="#i-scan"/></svg><span>扫描附近的 Wi-Fi</span></button>
     <div class="nets" id="nets"></div>
     <div class="grid2" style="margin-top:10px">
-      <label class="f"><span>Wi-Fi 名称</span><input id="ssid" placeholder="从上方列表选择，或手动填写" autocomplete="off"></label>
+      <label class="f"><span>Wi-Fi 名称</span><input id="ssid" placeholder="从列表选择，或手动填写" autocomplete="off"></label>
       <label class="f"><span>密码</span><div class="pw"><input id="pw" type="password" placeholder="无密码可留空" autocomplete="off"><button type="button" data-eye="pw" aria-label="显示密码"><svg><use href="#i-eye"/></svg></button></div></label>
     </div>
     <div class="actions"><button class="btn" id="connect">连接</button></div>
     <div class="chips" id="saved"></div>
   </section>
 
-  <section>
-    <div class="sec-head"><div class="ico"><svg><use href="#i-eth"/></svg></div><h2>网线</h2></div>
+  <section class="panel" data-panel="wired">
     <div class="seg" id="mode"><button data-v="auto" class="on">自动获取（DHCP）</button><button data-v="manual">固定 IP</button></div>
     <div id="manual" hidden>
       <div class="grid2" style="margin-top:12px">
-        <label class="f"><span>地址</span><input id="addr" placeholder="如 192.168.1.50" inputmode="decimal"></label>
+        <label class="f"><span>地址</span><input id="addr" placeholder="如 192.168.50.1" inputmode="decimal"></label>
         <label class="f"><span>前缀长度</span><input id="prefix" placeholder="如 24" value="24" inputmode="numeric"></label>
-        <label class="f"><span>网关</span><input id="gw" placeholder="如 192.168.1.1" inputmode="decimal"></label>
+        <label class="f"><span>网关（直连电脑时可留空）</span><input id="gw" placeholder="如 192.168.50.254" inputmode="decimal"></label>
         <label class="f"><span>DNS（空格隔开）</span><input id="dns" value="223.5.5.5 119.29.29.29"></label>
       </div>
     </div>
     <div class="actions"><button class="btn" id="wired">保存</button></div>
   </section>
 
-  <section>
-    <div class="sec-head"><div class="ico"><svg><use href="#i-server"/></svg></div><h2>连接服务器</h2><span id="tun-pill" class="pill idle">未设置</span></div>
-    <div class="sec-note">通过 SSH 将服务器上的推理服务与 TensorBoard 映射到端侧板：端侧板上的程序访问 127.0.0.1，你的电脑访问端侧板的 IP。连接中断后自动重连。</div>
-    <div class="grid3">
-      <label class="f"><span>服务器地址</span><input id="t-host" placeholder="IP 或域名" autocomplete="off" autocapitalize="off"></label>
-      <label class="f"><span>SSH 端口</span><input id="t-port" value="22" inputmode="numeric"></label>
-      <label class="f"><span>账号</span><input id="t-user" placeholder="如 root" autocomplete="off" autocapitalize="off"></label>
+  <section class="panel" data-panel="server">
+    <div class="sec-note">通过 SSH 将服务器上的端口映射到端侧板：端侧板上的程序访问 127.0.0.1，你的电脑访问端侧板的 IP。推理服务与 TensorBoard 可以在同一台服务器上，也可以在不同的服务器上，每台服务器分别添加。连接中断后自动重连。</div>
+    <div id="srv-list"></div>
+    <div class="actions" id="srv-add-box"><button class="btn ghost" id="srv-add"><svg><use href="#i-plus"/></svg>添加服务器</button></div>
+
+    <div id="srv-form" class="hidden">
+      <div class="sec-head" style="margin-top:6px"><div class="ico"><svg><use href="#i-server"/></svg></div><h3 id="f-title">添加服务器</h3></div>
+      <label class="f"><span>名称</span><input id="t-name" placeholder="如 推理服务器、训练服务器" autocomplete="off"></label>
+      <div class="grid3" style="margin-top:10px">
+        <label class="f"><span>服务器地址</span><input id="t-host" placeholder="IP 或域名" autocomplete="off" autocapitalize="off"></label>
+        <label class="f"><span>SSH 端口</span><input id="t-port" value="22" inputmode="numeric"></label>
+        <label class="f"><span>账号</span><input id="t-user" placeholder="如 root" autocomplete="off" autocapitalize="off"></label>
+      </div>
+      <div style="margin-top:12px" class="seg" id="t-auth"><button data-v="password" class="on">账号密码</button><button data-v="key">私钥</button></div>
+      <div id="t-pass-box" style="margin-top:10px">
+        <label class="f"><span>密码</span><div class="pw"><input id="t-pass" type="password" autocomplete="off"><button type="button" data-eye="t-pass" aria-label="显示密码"><svg><use href="#i-eye"/></svg></button></div></label>
+      </div>
+      <div id="t-key-box" class="hidden" style="margin-top:10px">
+        <label class="f"><span>私钥（粘贴完整内容，或 <a href="#" id="t-key-pick" style="color:var(--blue)">选择文件</a>）</span><textarea id="t-key" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;…&#10;-----END OPENSSH PRIVATE KEY-----"></textarea></label>
+        <input type="file" id="t-key-file" class="hidden">
+        <label class="f" style="margin-top:10px"><span>私钥口令（无口令可留空）</span><div class="pw"><input id="t-phrase" type="password" autocomplete="off"><button type="button" data-eye="t-phrase" aria-label="显示口令"><svg><use href="#i-eye"/></svg></button></div></label>
+      </div>
+      <div class="fwd fwd-head"><span>映射名称</span><span>端侧板端口</span><span></span><span>服务器端口</span><span></span></div>
+      <div id="t-fwds"></div>
+      <div class="presets" id="t-presets"></div>
+      <div class="actions">
+        <button class="btn" id="t-save"><svg><use href="#i-plug"/></svg>保存并连接</button>
+        <button class="btn plain" id="t-cancel">取消</button>
+      </div>
     </div>
-    <div style="margin-top:12px" class="seg" id="t-auth"><button data-v="password" class="on">账号密码</button><button data-v="key">私钥</button></div>
-    <div id="t-pass-box" style="margin-top:10px">
-      <label class="f"><span>密码</span><div class="pw"><input id="t-pass" type="password" autocomplete="off"><button type="button" data-eye="t-pass" aria-label="显示密码"><svg><use href="#i-eye"/></svg></button></div></label>
+  </section>
+
+  <section class="panel" data-panel="open">
+    <div id="open-empty" class="empty hidden">端侧板尚未联网。在「Wi-Fi」或「网线」中连接网络后，这里列出可在你的网络中打开的网页。</div>
+    <div id="open-box">
+      <div class="seg seg-hosts" id="hosts"></div>
+      <div class="tiles" id="links"></div>
     </div>
-    <div id="t-key-box" class="hidden" style="margin-top:10px">
-      <label class="f"><span>私钥（粘贴完整内容，或 <a href="#" id="t-key-pick" style="color:var(--blue)">选择文件</a>）</span><textarea id="t-key" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;…&#10;-----END OPENSSH PRIVATE KEY-----"></textarea></label>
-      <input type="file" id="t-key-file" class="hidden">
-      <label class="f" style="margin-top:10px"><span>私钥口令（无口令可留空）</span><div class="pw"><input id="t-phrase" type="password" autocomplete="off"><button type="button" data-eye="t-phrase" aria-label="显示口令"><svg><use href="#i-eye"/></svg></button></div></label>
-    </div>
-    <div class="fwd fwd-head"><span>映射名称</span><span>端侧板端口</span><span></span><span>服务器端口</span><span></span></div>
-    <div id="t-fwds"></div>
-    <div class="actions">
-      <button class="btn" id="t-save"><svg><use href="#i-plug"/></svg>保存并连接</button>
-      <button class="btn ghost" id="t-add"><svg><use href="#i-plus"/></svg>添加映射</button>
-      <button class="btn danger hidden" id="t-stop">断开</button>
-    </div>
-    <div class="tun-err" id="t-err"></div>
-    <div class="maps" id="t-maps"></div>
   </section>
 </main>
 
@@ -258,13 +302,19 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const icon = (name, cls = "") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
-let wiredFilled = false, tunnelFilled = false, pickedHost = null, lastStatus = null, lastTunnel = null;
-let shownAt = 0, dismissedAt = -1;  // 点掉的那条消息不再弹；下一个操作的消息时刻不同，照常显示
+let wiredFilled = false, pickedHost = null, lastStatus = null, servers = [], presets = [], editing = null;
+let shownAt = 0, dismissedAt = -1;  // 已关闭的那条消息不再显示；下一次操作的消息时间不同，照常显示
 
-// 七个网页服务连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code · 8005 硬件检测 · 8006 网页标定
+// 端侧板上的网页服务端口连号：8001 本页 · 8002 网页终端 · 8003 JupyterLab · 8004 浏览器版 VS Code · 8005 硬件检测 · 8006 网页标定
 const SERVICES = [[8001, "网络设置", "gear"], [8002, "网页终端", "term"], [8003, "JupyterLab", "book"],
                   [8004, "VS Code", "code"], [8005, "硬件检测", "chip"], [8006, "网页标定", "target"]];
+const TABS = ["wifi", "wired", "server", "open"];
 
+function showTab(tab) {
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === tab));
+  history.replaceState(null, "", "#" + tab);
+}
 function segValue(id) { return $(id).querySelector("button.on").dataset.v; }
 function setSeg(id, v) { $(id).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === v)); }
 function setPill(id, cls, text) { $(id).className = "pill " + cls; $(id).textContent = text; }
@@ -273,18 +323,20 @@ function linkPill(dev) {
   return dev.online ? ["ok", "可访问外网"] : ["mid", "无法访问外网"];
 }
 function kv(pairs) { return pairs.filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join(""); }
+function boardIps(s) { return [...s.ethernet.addresses, ...s.wifi.addresses].map((a) => a.split("/")[0]); }
 
-function renderLinks(s) {
-  const ips = [...s.ethernet.addresses, ...s.wifi.addresses].map((a) => a.split("/")[0]);
-  const hosts = [s.mdns, ...ips];
-  $("links-box").hidden = ips.length === 0;
+function renderLinks() {
+  const s = lastStatus; if (!s) return;
+  const ips = boardIps(s), hosts = [s.mdns, ...ips];
+  $("open-empty").classList.toggle("hidden", ips.length > 0);
+  $("open-box").classList.toggle("hidden", ips.length === 0);
   if (!hosts.includes(pickedHost)) pickedHost = ips[0] || s.mdns;
   $("hosts").innerHTML = hosts.map((h) => `<button data-v="${esc(h)}" class="${h === pickedHost ? "on" : ""}">${esc(h)}</button>`).join("");
   const h = pickedHost;
-  const tun = (lastTunnel && lastTunnel.state === "active") ? lastTunnel.forwards.filter((f) => f.web !== false) : [];
+  const tun = servers.filter((v) => v.state === "active").flatMap((v) => v.forwards.filter((f) => f.web).map((f) => ({...f, server: v.name})));
   $("links").innerHTML = SERVICES.map(([port, name, ico]) =>
     `<a class="tile" href="http://${esc(h)}:${port}" target="_blank"><span class="ico">${icon(ico)}</span><span><b>${name}</b><small>${port}</small></span></a>`).join("") +
-    tun.map((f) => `<a class="tile tun" href="http://${esc(h)}:${f.local}" target="_blank"><span class="ico">${icon("chart")}</span><span><b>${esc(f.name)}</b><small>${f.local} · 服务器</small></span></a>`).join("");
+    tun.map((f) => `<a class="tile tun" href="http://${esc(h)}:${f.local}" target="_blank"><span class="ico">${icon("chart")}</span><span><b>${esc(f.name)}</b><small>${f.local} · ${esc(f.server)}</small></span></a>`).join("");
 }
 
 async function refresh() {
@@ -300,7 +352,7 @@ async function refresh() {
     ["网关", s.wifi.gateway], ["DNS", s.wifi.dns.join(" ")]]);
   setPill("ap-pill", ...(s.hotspot.up ? ["ok", "已开启"] : ["bad", "未开启"]));
   $("ap").innerHTML = kv([["名称", s.hotspot.ssid], ["地址", s.hotspot.address], ["密码", "无"]]);
-  renderLinks(s);
+  renderLinks();
   $("saved").innerHTML = s.saved_wifi.length ? "<span>已保存：</span>" + s.saved_wifi.map((n) =>
     `<span class="chip">${esc(n)}<button data-forget="${esc(n)}" title="删除">×</button></span>`).join("") : "";
   if (!wiredFilled && s.ethernet.method) {
@@ -318,6 +370,43 @@ async function refresh() {
   $("msg").querySelector(".t-ico").outerHTML = icon({running: "load", done: "check", failed: "alert"}[j.state] || "check", "t-ico" + (j.state === "running" ? " spin" : ""));
   const busy = j.state === "running";
   $("connect").disabled = $("wired").disabled = $("t-save").disabled = busy;
+}
+
+// ---------- 连接服务器 ----------
+
+function serverPill(v) {
+  if (!v.enabled) return ["idle", "已断开"];
+  if (v.state === "failed") return ["bad", "未连接"];
+  if (v.state !== "active" || v.forwards.some((f) => v.probes[f.local] === "down")) return ["mid run", "连接中"];
+  return ["ok", "已连接"];
+}
+function renderServers() {
+  $("srv-list").innerHTML = servers.length ? servers.map((v) => {
+    const [cls, text] = serverPill(v);
+    const ip = lastStatus ? boardIps(lastStatus)[0] : "";
+    const maps = v.forwards.map((f) => {
+      const p = v.probes[f.local];
+      const st = !v.enabled ? null : p === "ok" ? ["ok", "畅通"] : p === "closed" ? ["mid", "服务器上该端口无服务"] : p === "down" ? ["bad", "未映射"] : ["idle", "…"];
+      const open = (p === "ok" && f.web && ip) ? `<a href="http://${esc(ip)}:${f.local}" target="_blank">打开</a>` : "";
+      return `<div class="map"><b>${esc(f.name)}</b><span class="route">端侧板 0.0.0.0:${f.local} → 服务器 ${esc(f.remote_host)}:${f.remote}</span>${open}${st ? `<span class="pill ${st[0]}">${st[1]}</span>` : ""}</div>`;
+    }).join("");
+    const err = v.enabled && v.state !== "active" && v.error ? `<div class="tun-err">${esc(v.error)}</div>` : "";
+    return `<div class="srv" data-id="${esc(v.id)}">
+      <div class="srv-top"><div class="ico">${icon("server")}</div><div><h3>${esc(v.name)}</h3><div class="srv-sub">${esc(v.user)}@${esc(v.host)}:${v.port}</div></div><span class="pill ${cls}">${text}</span></div>
+      ${maps}${err}
+      <div class="actions"><button class="btn ghost small" data-act="edit">${icon("edit")}编辑</button>
+        ${v.enabled ? `<button class="btn ghost small" data-act="stop">断开</button>` : `<button class="btn ghost small" data-act="start">${icon("plug")}连接</button>`}
+        <button class="btn danger small" data-act="delete">删除</button></div></div>`;
+  }).join("") : `<div class="empty">尚未添加服务器</div>`;
+  const tones = servers.filter((v) => v.enabled).map((v) => serverPill(v)[0].split(" ")[0]);
+  $("srv-dot").className = "dot " + (tones.includes("bad") ? "bad" : tones.includes("mid") ? "mid" : tones.length ? "ok" : "");
+  renderLinks();
+}
+async function refreshServers() {
+  let t;
+  try { t = await (await fetch("/api/tunnels", {cache: "no-store"})).json(); } catch (e) { return; }
+  servers = t.servers; presets = t.presets;
+  renderServers();
 }
 
 function fwdRow(f = {}) {
@@ -338,44 +427,38 @@ function readFwds() {
     return {name: row.querySelector(".n").value.trim(), local: l, remote_host: m ? m[1] : "127.0.0.1", remote: m ? m[2] : (r || l), web: row.dataset.web !== "0"};
   }).filter((f) => f.local || f.remote);
 }
-
-async function refreshTunnel() {
-  let t;
-  try { t = await (await fetch("/api/tunnel", {cache: "no-store"})).json(); } catch (e) { return; }
-  lastTunnel = t;
-  if (!tunnelFilled) {
-    tunnelFilled = true;
-    $("t-host").value = t.host; $("t-port").value = t.port || 22; $("t-user").value = t.user;
-    setSeg("t-auth", t.auth); showAuth();
-    $("t-pass").placeholder = t.has_password ? "已保存，无需修改可留空" : "";
-    $("t-key").placeholder = t.has_key ? "已保存私钥，无需更换可留空" : $("t-key").placeholder;
-    $("t-fwds").innerHTML = ""; t.forwards.forEach(fwdRow);
-  }
-  const states = {active: ["ok", "已连接"], activating: ["mid run", "连接中"], failed: ["bad", "未连接"]};
-  let pill = !t.configured ? ["idle", "未设置"] : !t.enabled ? ["idle", "已断开"] : (states[t.state] || ["mid run", "重连中"]);
-  if (t.enabled && t.state === "active" && t.forwards.some((f) => t.probes[f.local] === "down")) pill = ["mid run", "连接中"];
-  setPill("tun-pill", ...pill);
-  $("t-stop").classList.toggle("hidden", !t.enabled);
-  $("t-err").textContent = t.enabled && t.state !== "active" ? t.error : "";
-  const ip = lastStatus ? [...lastStatus.ethernet.addresses, ...lastStatus.wifi.addresses].map((a) => a.split("/")[0])[0] : "";
-  $("t-maps").innerHTML = (t.enabled && t.state === "active") ? t.forwards.map((f) => {
-    const p = t.probes[f.local];
-    const st = p === "ok" ? ["ok", "畅通"] : p === "closed" ? ["mid", "服务器上该端口无服务"] : p === "down" ? ["bad", "未映射"] : ["idle", "…"];
-    const open = (p === "ok" && f.web !== false && ip) ? `<a href="http://${esc(ip)}:${f.local}" target="_blank">打开</a>` : "";
-    return `<div class="map"><b>${esc(f.name)}</b><span class="route">端侧板 0.0.0.0:${f.local} → 服务器 ${esc(f.remote_host)}:${f.remote}</span>${open}<span class="pill ${st[0]}">${st[1]}</span></div>`;
-  }).join("") : "";
-  if (lastStatus) renderLinks(lastStatus);
-}
-
-async function post(url, body) {
-  await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
-  refresh();
-}
 function showAuth() {
   const key = segValue("t-auth") === "key";
   $("t-key-box").classList.toggle("hidden", !key); $("t-pass-box").classList.toggle("hidden", key);
 }
+function openForm(v) {
+  editing = v ? v.id : null;
+  $("f-title").textContent = v ? `编辑：${v.name}` : "添加服务器";
+  $("t-name").value = v ? v.name : ""; $("t-host").value = v ? v.host : ""; $("t-port").value = v ? v.port : 22; $("t-user").value = v ? v.user : "";
+  setSeg("t-auth", v ? v.auth : "password"); showAuth();
+  $("t-pass").value = ""; $("t-key").value = ""; $("t-phrase").value = "";
+  $("t-pass").placeholder = v && v.has_password ? "已保存，无需修改可留空" : "";
+  $("t-key").placeholder = v && v.has_key ? "已保存私钥，无需更换可留空" : "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----";
+  $("t-fwds").innerHTML = ""; (v ? v.forwards : []).forEach(fwdRow);
+  $("t-presets").innerHTML = presets.map((p, i) => `<button class="btn ghost small" data-preset="${i}">${icon("plus")}${esc(p.name)}（${p.local}）</button>`).join("") +
+    `<button class="btn ghost small" data-preset="other">${icon("plus")}其他端口</button>`;
+  $("srv-form").classList.remove("hidden"); $("srv-list").classList.add("hidden"); $("srv-add-box").classList.add("hidden");
+  $("t-name").focus();
+}
+function closeForm() {
+  editing = null;
+  $("srv-form").classList.add("hidden"); $("srv-list").classList.remove("hidden"); $("srv-add-box").classList.remove("hidden");
+}
 
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  refresh();
+  return r.ok;
+}
+
+// ---------- 事件 ----------
+
+$("tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) showTab(b.dataset.tab); };
 $("scan").onclick = async () => {
   $("scan").disabled = true; $("scan").querySelector("span").textContent = "扫描中…"; $("scan").querySelector("svg").classList.add("spin");
   try {
@@ -399,24 +482,43 @@ $("connect").onclick = () => post("/api/wifi", {ssid: $("ssid").value, password:
 $("saved").onclick = (e) => { const n = e.target.dataset.forget; if (n) post("/api/wifi/forget", {name: n}); };
 $("msg").onclick = () => { dismissedAt = shownAt; $("msg").hidden = true; };
 $("mode").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; setSeg("mode", b.dataset.v); $("manual").hidden = b.dataset.v !== "manual"; };
-$("hosts").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; pickedHost = b.dataset.v; if (lastStatus) renderLinks(lastStatus); };
+$("hosts").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; pickedHost = b.dataset.v; renderLinks(); };
 $("wired").onclick = () => post("/api/wired", {mode: segValue("mode"), address: $("addr").value, prefix: $("prefix").value,
   gateway: $("gw").value, dns: $("dns").value.split(/[\s,，]+/).filter(Boolean)});
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-eye]"); if (!b) return;
   const inp = $(b.dataset.eye); inp.type = inp.type === "password" ? "text" : "password";
 });
+
+$("srv-add").onclick = () => openForm(null);
+$("t-cancel").onclick = closeForm;
 $("t-auth").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; setSeg("t-auth", b.dataset.v); showAuth(); };
 $("t-key-pick").onclick = (e) => { e.preventDefault(); $("t-key-file").click(); };
 $("t-key-file").onchange = async () => { const f = $("t-key-file").files[0]; if (f) $("t-key").value = (await f.text()).trim(); };
-$("t-add").onclick = () => fwdRow();
-$("t-save").onclick = () => post("/api/tunnel", {host: $("t-host").value, port: $("t-port").value, user: $("t-user").value,
-  auth: segValue("t-auth"), password: $("t-pass").value, key: $("t-key").value, passphrase: $("t-phrase").value, forwards: readFwds()})
-  .then(() => setTimeout(refreshTunnel, 1500));
-$("t-stop").onclick = () => post("/api/tunnel/stop").then(() => setTimeout(refreshTunnel, 800));
+$("t-presets").onclick = (e) => {
+  const b = e.target.closest("[data-preset]"); if (!b) return;
+  fwdRow(b.dataset.preset === "other" ? {} : presets[Number(b.dataset.preset)]);
+};
+$("t-save").onclick = async () => {
+  const ok = await post("/api/tunnels/save", {id: editing, name: $("t-name").value, host: $("t-host").value, port: $("t-port").value,
+    user: $("t-user").value, auth: segValue("t-auth"), password: $("t-pass").value, key: $("t-key").value,
+    passphrase: $("t-phrase").value, forwards: readFwds()});
+  // 校验失败时消息出现在底部，表单保留；校验通过即回到列表，看连接进度
+  setTimeout(async () => { await refresh(); if (ok && lastStatus.job.state !== "failed") closeForm(); refreshServers(); }, 600);
+};
+$("srv-list").onclick = (e) => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const v = servers.find((s) => s.id === b.closest(".srv").dataset.id); if (!v) return;
+  if (b.dataset.act === "edit") openForm(v);
+  else if (b.dataset.act === "stop") post("/api/tunnels/stop", {id: v.id}).then(() => setTimeout(refreshServers, 800));
+  else if (b.dataset.act === "delete" && confirm(`删除服务器「${v.name}」？`)) post("/api/tunnels/delete", {id: v.id}).then(() => setTimeout(refreshServers, 800));
+  else if (b.dataset.act === "start") post("/api/tunnels/save", {id: v.id, name: v.name, host: v.host, port: v.port, user: v.user,
+    auth: v.auth, forwards: v.forwards}).then(() => setTimeout(refreshServers, 1500));
+};
 
-refresh(); refreshTunnel();
-setInterval(refresh, 2000); setInterval(refreshTunnel, 4000);
+showTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "wifi");
+refresh(); refreshServers();
+setInterval(refresh, 2000); setInterval(refreshServers, 4000);
 </script>
 </body>
 </html>
