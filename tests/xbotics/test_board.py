@@ -353,3 +353,13 @@ def test_tunnel_stops_retrying_after_an_auth_failure():
     unit = (PROVISION / "xbotics-tunnel.service").read_text()
     tunnel_mod = load("xbotics_tunnel")
     assert f"RestartPreventExitStatus={tunnel_mod.AUTH_FAILED}" in unit
+
+
+def test_upgrade_keeps_the_layout_of_values_that_did_not_change():
+    pytest.importorskip("tomlkit")
+    old = TEMPLATE.replace("\n[tool.xbotics]", "\n# 我自己的注释\n[tool.xbotics]")
+    assert render_env_pyproject(TEMPLATE, old) == old
+    without_marker = old[: old.index("\n# 我自己的注释")] + "\n"
+    new = render_env_pyproject(TEMPLATE, without_marker)
+    assert new.startswith(without_marker.rstrip("\n"))  # 只在末尾补上 [tool.xbotics]，前面一个字都不动
+    assert 'override-dependencies = [\n    "torch==2.9.1",' in new

@@ -151,25 +151,32 @@ def render_env_pyproject(template: str, old: str | None) -> str:
     managed = {req_name(d) for d in template_deps}
     previously_managed = set(doc.get("tool", {}).get("xbotics", {}).get("managed-dependencies", []))
 
+    def put(table, key: str, value) -> None:
+        """值不同才写：相同时保留文件里原来的排版（多行列表、空格），学员看着不乱。"""
+        current = table.get(key)
+        if getattr(current, "unwrap", lambda: current)() != value:
+            table[key] = value
+
     project = doc.setdefault("project", tomlkit.table())
     old_deps = [str(d) for d in project.get("dependencies", [])]
     by_name = {req_name(d): d for d in old_deps}
     deps = [merge_extras(d, by_name[req_name(d)]) if req_name(d) in by_name else d for d in template_deps]
     deps += [d for d in old_deps if req_name(d) not in managed | previously_managed]
-    project["dependencies"] = deps
-    project["requires-python"] = t["project"]["requires-python"]
+    put(project, "dependencies", deps)
+    put(project, "requires-python", t["project"]["requires-python"])
 
     tool = doc.setdefault("tool", tomlkit.table())
     uv = tool.setdefault("uv", tomlkit.table())
-    uv["package"] = t["tool"]["uv"]["package"]
-    uv["override-dependencies"] = t["tool"]["uv"]["override-dependencies"]
+    put(uv, "package", t["tool"]["uv"]["package"])
+    put(uv, "override-dependencies", t["tool"]["uv"]["override-dependencies"])
     sources = uv.setdefault("sources", tomlkit.table())
     old_src = sources.get("lerobot") or {}
-    if not ("branch" in old_src or "rev" in old_src):
+    template_src = t["tool"]["uv"]["sources"]["lerobot"]
+    if not ("branch" in old_src or "rev" in old_src) and dict(old_src) != template_src:
         src = tomlkit.inline_table()
-        src.update(t["tool"]["uv"]["sources"]["lerobot"])
+        src.update(template_src)
         sources["lerobot"] = src
-    tool.setdefault("xbotics", tomlkit.table())["managed-dependencies"] = sorted(managed)
+    put(tool.setdefault("xbotics", tomlkit.table()), "managed-dependencies", sorted(managed))
     new = tomlkit.dumps(doc)
     return old if tomllib.loads(new) == tomllib.loads(old) else new
 
