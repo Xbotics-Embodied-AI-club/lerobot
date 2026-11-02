@@ -9,7 +9,7 @@
 - 板子的 LeRobot 环境 ``/root/xbotics`` 的 pyproject：按 ``board_env/pyproject.toml`` 重写，自己用 ``uv add`` 加的包与源保留
 
 第一次装把 8002–8006 五个网页服务都打开；之后再装（升级）保持 ``xbotics-config`` 里的开关不变。
-在跑的服务有改动（跑 LeRobot 代码的那几个：LeRobot 升级了）就重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
+在跑的服务有改动就重启；跑 LeRobot 代码的那几个（JupyterLab、硬件检测、网页标定）在 LeRobot 换了版本时重启。重启延后 3 秒、放进单独的 systemd 单元：从网页终端或 VS Code 终端里升级时，
 重启它们不会把升级本身掐断。密码（JupyterLab、VS Code）已经设过的不覆盖。
 
     python -m lerobot.xbotics.board install
@@ -27,7 +27,7 @@ BOARD = Path(__file__).resolve().parent
 ROOT_HOME = Path("/root")
 ENV_DIR = ROOT_HOME / "xbotics"
 UV = ROOT_HOME / ".local/bin/uv"
-MARKER = Path("/etc/xbotics/installed")  # 第一次装完写下；有它就是升级
+MARKER = Path("/etc/xbotics/installed")  # 第一次装完写下（内容是当时装的 LeRobot 版本）；有它就是升级
 DEFAULT_PASSWORD = "123456"  # 与板子 root 密码相同：网页终端、JupyterLab、VS Code 只记一个
 CODE_SERVER_VERSION = "4.141.0"
 CODE_SERVER_EXTENSIONS = ("ms-python.python", "detachhead.basedpyright", "tamasfe.even-better-toml")
@@ -248,6 +248,15 @@ def apt_install() -> None:
         run("apt-get", "install", "-y", *missing, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
 
 
+def lerobot_version() -> str:
+    """装着的 LeRobot：从 git 装的取提交号，否则取版本号。"""
+    from importlib import metadata
+
+    dist = metadata.distribution("lerobot")
+    direct = json.loads(dist.read_text("direct_url.json") or "{}")
+    return direct.get("vcs_info", {}).get("commit_id") or dist.version
+
+
 def systemctl(*args: str) -> subprocess.CompletedProcess:
     return run("systemctl", *args, check=False, capture_output=True)
 
@@ -262,6 +271,8 @@ def install() -> None:
             "要用 root 运行：sudo /root/xbotics/.venv/bin/python -m lerobot.xbotics.board install"
         )
     first = not MARKER.exists()
+    version = lerobot_version()
+    lerobot_changed = first or MARKER.read_text().strip() != version
     say("第一次安装" if first else "升级：保持现有的服务开关，有改动的服务才重启")
     apt_install()
     sync_env()
@@ -294,7 +305,7 @@ def install() -> None:
     to_restart = [
         u
         for u in (*always_on, *WEB_SERVICES, "xbotics-tunnel")
-        if u in running and (u in changed_units or u in LEROBOT_SERVICES)
+        if u in running and (u in changed_units or (lerobot_changed and u in LEROBOT_SERVICES))
     ]
     for unit in always_on:
         run("systemctl", "enable", "--now", unit, capture_output=True)
@@ -304,7 +315,7 @@ def install() -> None:
         say("已打开五个网页服务（8002–8006），之后用 xbotics-config 开关")
 
     MARKER.parent.mkdir(parents=True, exist_ok=True)
-    MARKER.write_text("installed by lerobot.xbotics.board\n")
+    MARKER.write_text(version + "\n")
     if to_restart:
         # 放进单独的单元、延后 3 秒：从网页终端 / VS Code 终端里升级时，重启它们不会掐断本进程
         run(
