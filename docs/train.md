@@ -1,9 +1,11 @@
 # 第 4 章 训练
 
-本章在训练电脑上用录好的数据训练一个 ACT 模型，训练过程中用 TensorBoard 或 wandb 查看曲线，训练完成后得到可以部署的模型。命令均在训练电脑上、`~/xbotics` 目录中进入环境后执行（[2.2 节](#train-env-setup)）。
+本章在训练电脑上用录好的数据训练一个 ACT 模型，训练过程中查看曲线，训练完成后得到可以部署的模型。训练命令在**训练电脑的终端**中执行，查看曲线在**你的电脑或手机的浏览器**中进行。
 
 (train-run)=
 ## 4.1 开始训练
+
+训练电脑在远处、经 SSH 登录时，先执行 `tmux new -s train` 进入一个 tmux 会话，再在其中启动训练：这样关掉 SSH 窗口或网络断开，训练也不会中断。之后需要回来查看时，重新 SSH 登录并执行 `tmux attach -t train`；在会话中按 `Ctrl+B` 后再按 `D` 即可离开，训练继续运行。训练电脑就在身边时，直接在终端中执行即可。
 
 ```bash
 cd ~/xbotics && source .venv/bin/activate
@@ -27,16 +29,30 @@ lerobot-train \
 (train-curves)=
 ## 4.2 用 TensorBoard 查看曲线
 
-`lerobot-train` 默认把曲线写入输出目录下的 `tensorboard` 中，无需账号与网络。训练开始后另开一个终端，进入环境后执行：
+`lerobot-train` 默认把曲线写入输出目录下的 `tensorboard` 中，无需账号与网络。查看分两步：在训练电脑上启动 TensorBoard，再在浏览器中打开它。
+
+**第一步，在训练电脑上启动 TensorBoard。** 另开一个终端（训练电脑在远处时，另开一个 SSH 窗口，同样建议在 tmux 中运行，例如 `tmux new -s tb`），执行：
 
 ```bash
 cd ~/xbotics && source .venv/bin/activate
 tensorboard --logdir outputs/train
 ```
 
-在浏览器中打开 `http://localhost:6006`，数秒内即可看到新的数据点。`--logdir` 指定 `outputs/train` 时，可同时比较多次训练。要在其他电脑上查看，按 [5.2 节](#connect-server) 让端侧计算平台连接这台电脑后，打开 `http://<端侧IP>:6006`。
+终端显示 `TensorBoard ... at http://localhost:6006/` 即已启动，保持它运行。`--logdir` 指定 `outputs/train` 时，可同时比较多次训练。
+
+**第二步，在浏览器中打开。** TensorBoard 只在训练电脑本机监听，按你所在的位置选择一种方式：
+
+| 你在哪里 | 怎么打开 |
+| --- | --- |
+| 坐在训练电脑前 | 在训练电脑的浏览器中打开 `http://localhost:6006` |
+| 在端侧计算平台所在的网络中，且已按 [2.6 节](#connect-server) 连接训练电脑 | 在你的电脑或手机上打开 `http://<端侧IP>:6006`，或在网络设置页「打开网页」标签中点击 TensorBoard |
+| 在其他地方，能经 SSH 登录训练电脑 | 在你的电脑上另开一个终端执行 `ssh -N -L 6006:127.0.0.1:6006 <用户名>@<训练电脑IP>` 并保持窗口打开，再在浏览器中打开 `http://localhost:6006` |
+
+第二种方式由端侧计算平台转发：网络设置页「连接服务器」中 TensorBoard 一条映射显示「畅通」，即可打开。第三种方式由你电脑上的 SSH 转发，Windows 在 PowerShell 中同样可以执行这条命令。
 
 ![训练曲线：损失、梯度、吞吐与显存](images/use-17-tensorboard.png)
+
+数秒内即可看到新的数据点。各条曲线的含义：
 
 | 曲线 | 含义 |
 | --- | --- |
@@ -50,7 +66,7 @@ tensorboard --logdir outputs/train
 (train-wandb)=
 ## 4.3 用 wandb 查看曲线
 
-wandb 把曲线上传到网页，换一台电脑、在手机上也能查看。先在 [wandb.ai](https://wandb.ai) 注册账号，在训练电脑上登录一次，按提示粘贴网页上给出的 API key：
+wandb 把曲线上传到它的网站，在任何地方的浏览器中登录即可查看，不需要任何转发，训练电脑在远处时最省事；前提是训练电脑能访问外网。先在 [wandb.ai](https://wandb.ai) 注册账号，在训练电脑上登录一次，按提示粘贴网页上给出的 API key：
 
 ```bash
 wandb login
@@ -66,7 +82,7 @@ lerobot-train \
   --wandb.enable=true
 ```
 
-训练开始后，终端会给出本次训练的网址；也可以在 wandb 网页上的 `lerobot` 项目中找到它。曲线的名字与 TensorBoard 相同，TensorBoard 照常写入，两者可同时使用。
+训练开始后，终端会给出本次训练的网址；也可以在 wandb 网站的 `lerobot` 项目中找到它。曲线的名字与 TensorBoard 相同，TensorBoard 照常写入，两者可同时使用。
 
 (train-output)=
 ## 4.4 训练结果
@@ -81,7 +97,7 @@ outputs/train/act_pick_cube/checkpoints/
 └── last -> 100000
 ```
 
-部署时使用其中的 `pretrained_model` 目录，例如 `~/xbotics/outputs/train/act_pick_cube/checkpoints/last/pretrained_model`，见 [5.3 节](#deploy-console)。
+部署时使用其中的 `pretrained_model` 目录，例如 `~/xbotics/outputs/train/act_pick_cube/checkpoints/last/pretrained_model`，见 [5.2 节](#deploy-console)。
 
 ## 4.5 中断后继续训练
 

@@ -2,7 +2,7 @@
 
 录制时，操作者握持主臂完成任务，从臂同步跟随，端侧计算平台把两路相机画面、从臂的关节读数与主臂给出的动作一同保存为数据集。录好后可以在端侧计算平台上回放检查，再拷贝到训练电脑查看与训练。
 
-本章的录制与回放在端侧计算平台的网页终端中执行，开始前请完成第 1 章，并设置相机变量（[1.7 节](#camera-var)）。没有机械臂、或想先走通后面的训练与部署，可以直接使用我们开源的数据，见 [3.5 节](#open-data)。
+录制、回放与拷贝在**端侧计算平台的网页终端**中执行，开始前请完成第 1 章，并设置相机变量（[1.7 节](#camera-var)）；查看数据在训练电脑上进行。没有机械臂、或想先走通后面的训练与部署，可以直接使用我们开源的数据，见 [3.5 节](#open-data)。
 
 ## 3.1 录制
 
@@ -55,18 +55,19 @@ lerobot-replay \
 (record-copy)=
 ## 3.3 拷贝到训练电脑
 
-在**训练电脑**的终端中执行，密码为 `123456`：
+在**端侧计算平台的网页终端**中执行，把数据集推送到训练电脑的 `~/data` 中。`<用户名>` 与 `<训练电脑IP>` 见 [2.5 节](#train-env-ssh)，每条命令会提示输入训练电脑的密码，首次连接时先输入 `yes`：
 
 ```bash
-mkdir -p ~/data && scp -r root@<端侧IP>:data/pick_cube ~/data/
+ssh <用户名>@<训练电脑IP> mkdir -p data
+scp -r ~/data/pick_cube <用户名>@<训练电脑IP>:data/
 ```
 
-完成后，训练电脑上的 `~/data/pick_cube` 即为这份数据集，后续查看与训练都使用这个路径。
+训练电脑在近处、远处都适用。训练电脑的 SSH 端口不是 22 时，在 `ssh` 后加 `-p <端口>`，在 `scp` 后加 `-P <端口>`。完成后，训练电脑上的 `~/data/pick_cube` 即为这份数据集，后续查看与训练都使用这个路径。
 
 (record-viz)=
 ## 3.4 查看数据
 
-在训练电脑上进入环境（[2.2 节](#train-env-setup)），逐集查看录下的数据：
+逐集查看录下的画面与曲线。训练电脑在你身边时，在**训练电脑的终端**中执行：
 
 ```bash
 lerobot-dataset-viz --repo-id local/pick_cube --root ~/data/pick_cube --episode-index 0
@@ -76,10 +77,33 @@ lerobot-dataset-viz --repo-id local/pick_cube --root ~/data/pick_cube --episode-
 
 ![Rerun 查看器：开源数据中「将方块放入料盒」的一集](images/use-23-dataset-viz.png)
 
+**训练电脑在远处、没有显示器时**，让它以网页形式提供查看器，再从你的电脑经 SSH 转发打开：
+
+1. 在训练电脑上（经 SSH 登录后）执行：
+
+```bash
+lerobot-dataset-viz --repo-id local/pick_cube --root ~/data/pick_cube --episode-index 0 \
+  --mode distant --web-port 9090 --grpc-port 9876
+```
+
+2. 在**你的电脑**上另开一个终端（Windows 用 PowerShell），执行下面一行并保持窗口打开：
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 -L 9876:127.0.0.1:9876 <用户名>@<训练电脑IP>
+```
+
+3. 在你的电脑的浏览器中打开下面的网址，界面与上图相同：
+
+```text
+http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy
+```
+
+看完后在两个窗口中分别按 `Ctrl+C` 结束。
+
 (open-data)=
 ## 3.5 使用开源数据
 
-我们录制并开源了九个任务的 SO-101 真机数据，格式与 3.1 节录制的数据相同，可以直接用于训练。在训练电脑上下载其中「将方块放入料盒」一个任务：
+我们录制并开源了九个任务的 SO-101 真机数据，格式与 3.1 节录制的数据相同，可以直接用于训练。在**训练电脑的终端**中下载其中「将方块放入料盒」一个任务：
 
 ```bash
 uvx modelscope download --dataset zhuzhuangtian/so101-pick-place-tasks \

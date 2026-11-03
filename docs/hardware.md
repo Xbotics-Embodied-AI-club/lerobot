@@ -15,8 +15,8 @@
 | `http://<端侧IP>:8004` | 浏览器版 VS Code | 服务开启时 |
 | `http://<端侧IP>:8005` | 硬件检测 | 服务开启时 |
 | `http://<端侧IP>:8006` | 网页标定 | 服务开启时 |
-| `http://<端侧IP>:8007` | 推理控制台 | 部署期间，见 [5.3 节](#deploy-console) |
-| `http://<端侧IP>:6006` | 训练电脑上的 TensorBoard | 已连接训练电脑时，见 [5.2 节](#connect-server) |
+| `http://<端侧IP>:8007` | 推理控制台 | 部署期间，见 [5.2 节](#deploy-console) |
+| `http://<端侧IP>:6006` | 训练电脑上的 TensorBoard | 已连接训练电脑时，见 [2.6 节](#connect-server) |
 | `http://<端侧IP>:9090` | 录制预览：相机画面与关节曲线 | 遥操作、录制数据期间 |
 
 `<端侧IP>` 为端侧计算平台的地址：连接其热点时为 `10.42.0.1`，接入你的网络后为 1.2 节中显示的地址；局域网中也可以用 `xbotics-XXXX.local` 代替（后四位与热点名相同）。用户名为 `root`，默认密码为 `123456`，网页终端、JupyterLab、VS Code 与 SSH 均使用该密码。请只在自己的局域网中使用，不要将这些端口映射到公网。
@@ -38,7 +38,7 @@
 xbotics-config status
 ```
 
-输出列出各网页服务是否开机自启、是否正在运行及其网址；最后几行 `tunnel@<编号>` 是已连接的训练电脑，见 [5.2 节](#connect-server)。
+输出列出各网页服务是否开机自启、是否正在运行及其网址；最后几行 `tunnel@<编号>` 是已连接的训练电脑，见 [2.6 节](#connect-server)。
 
 ![xbotics-config status：五个网页服务，以及已连接的两台训练电脑](images/use-14-xbotics-config-status.png)
 
