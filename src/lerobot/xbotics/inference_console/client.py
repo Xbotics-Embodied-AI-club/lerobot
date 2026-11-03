@@ -451,6 +451,14 @@ class InferenceLatencyTracker:
             return max(self._history)
 
 
+def live_cameras(robot) -> dict[str, Any]:
+    """机器人上带帧缓存的相机对象（真机的 OpenCV 等相机）。
+
+    SO-101 仿真机器人的 ``cameras`` 只是相机名到图像尺寸的映射，没有帧可取，此时返回空字典。
+    """
+    return {k: cam for k, cam in getattr(robot, "cameras", {}).items() if hasattr(cam, "frame_lock")}
+
+
 @dataclass
 class PolicyRobotClientConfig:
     """Configuration for PolicyRobotClient.
@@ -763,6 +771,7 @@ class PolicyRobotClient:
         self.config = config
         self.robot = make_robot_from_config(config.robot)
         self.robot.connect()
+        self._live_cameras = live_cameras(self.robot)
 
         self.transport = create_transport(config, self.robot, self.logger)
 
@@ -1066,7 +1075,7 @@ class PolicyRobotClient:
 
         真机取相机对象的最新帧；没有相机对象的机器人（如仿真）取最近一次观测中的图像。
         """
-        cameras = getattr(self.robot, "cameras", None)
+        cameras = self._live_cameras
         obs_images = self._obs_images  # 控制线程会整体替换该 dict，这里只取一次
         frames = {}
         for cam_key in cameras or obs_images:
@@ -1439,7 +1448,7 @@ class PolicyRobotClient:
 
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
-            if not getattr(self.robot, "cameras", None):
+            if not self._live_cameras:
                 self._obs_images = {k: v for k, v in raw_observation.items() if getattr(v, "ndim", 0) == 3}
 
             with self.latest_action_lock:

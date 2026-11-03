@@ -21,6 +21,7 @@ from lerobot.xbotics.inference_console.client import (  # noqa: E402
     InferenceLatencyTracker,
     PolicyRobotClient,
     PolicyRobotClientConfig,
+    live_cameras,
 )
 from lerobot.xbotics.inference_console.msgpack_numpy import packb, unpackb  # noqa: E402
 from lerobot.xbotics.inference_console.transport import (  # noqa: E402
@@ -331,3 +332,33 @@ def test_ws_actions_follow_configured_key_order():
 
     assert [a.get_timestep() for a in actions] == [10, 11, 12]
     assert actions[0].get_action().tolist() == [0.0, 0.0, 0.0, 1.0]
+
+
+def _webui_client(robot, obs_images=None):
+    client = PolicyRobotClient.__new__(PolicyRobotClient)
+    client.robot = robot
+    client._live_cameras = live_cameras(robot)
+    client._obs_images = obs_images or {}
+    client._webui_frames = {}
+    client._webui_frames_lock = threading.Lock()
+    return client
+
+
+def test_sim_robot_camera_shapes_are_not_live_cameras_and_frames_come_from_observation():
+    """仿真机器人的 cameras 是「名字 → 图像尺寸」：网页画面改取最近一次观测中的图像。"""
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    robot = SimpleNamespace(cameras={"top": (48, 64, 3), "wrist": (48, 64, 3)})
+    client = _webui_client(robot, {"top": frame, "wrist": frame})
+    assert client._live_cameras == {}
+    client._capture_webui_frames()
+    assert sorted(client._webui_frames) == ["top", "wrist"]
+    assert all(jpeg[:2] == b"\xff\xd8" for jpeg in client._webui_frames.values())
+
+
+def test_real_camera_frames_come_from_the_camera_object():
+    cam = SimpleNamespace(frame_lock=threading.Lock(), latest_frame=np.zeros((48, 64, 3), dtype=np.uint8))
+    client = _webui_client(
+        SimpleNamespace(cameras={"top": cam}), {"stale": np.ones((48, 64, 3), dtype=np.uint8)}
+    )
+    client._capture_webui_frames()
+    assert list(client._webui_frames) == ["top"]
