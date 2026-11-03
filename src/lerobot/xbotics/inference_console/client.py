@@ -841,6 +841,8 @@ class PolicyRobotClient:
         self._queue_viz: list[dict] = []  # 队列组成快照（old/new/agg/blend+alpha）
         self._webui_frames: dict[str, bytes] = {}
         self._webui_frames_lock = threading.Lock()
+        # 没有相机对象的机器人（如 SO-101 仿真）：网页画面取自最近一次观测中的图像
+        self._obs_images: dict[str, Any] = {}
         # 停止任务回初始位置：校验关节名合法性
         if config.home_action:
             unknown = set(config.home_action) - set(self.robot.action_features)
@@ -1060,12 +1062,21 @@ class PolicyRobotClient:
             time.sleep(0.1)
 
     def _capture_webui_frames(self) -> None:
-        """抓取各相机最新帧并编码为 JPEG（供 webui 画面流使用，非阻塞）。"""
+        """抓取各相机最新帧并编码为 JPEG（供 webui 画面流使用，非阻塞）。
+
+        真机取相机对象的最新帧；没有相机对象的机器人（如仿真）取最近一次观测中的图像。
+        """
+        cameras = getattr(self.robot, "cameras", None)
+        obs_images = self._obs_images  # 控制线程会整体替换该 dict，这里只取一次
         frames = {}
-        for cam_key, cam in getattr(self.robot, "cameras", {}).items():
+        for cam_key in cameras or obs_images:
             try:
-                with cam.frame_lock:
-                    img = cam.latest_frame
+                if cameras:
+                    cam = cameras[cam_key]
+                    with cam.frame_lock:
+                        img = cam.latest_frame
+                else:
+                    img = obs_images[cam_key]
                 if img is None:
                     continue
                 buf = io.BytesIO()
@@ -1428,6 +1439,8 @@ class PolicyRobotClient:
 
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
+            if not getattr(self.robot, "cameras", None):
+                self._obs_images = {k: v for k, v in raw_observation.items() if getattr(v, "ndim", 0) == 3}
 
             with self.latest_action_lock:
                 latest_action = self.latest_action
