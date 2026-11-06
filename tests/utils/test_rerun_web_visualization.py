@@ -5,11 +5,17 @@
 """
 
 import inspect
+import time
 
 import numpy as np
 import pytest
 
-from lerobot.utils import keyboard_input as ki, rerun_web_visualization as web, visualization_utils as vu
+from lerobot.utils import (
+    keyboard_input as ki,
+    rerun_web_server as server,
+    rerun_web_visualization as web,
+    visualization_utils as vu,
+)
 
 
 def test_web_is_a_visualization_mode():
@@ -21,7 +27,7 @@ def test_web_is_a_visualization_mode():
     [("192.168.1.50:9090", "192.168.1.50"), ("board.local", "board.local"), ("[fe80::1]:9090", "[fe80::1]")],
 )
 def test_viewer_url_uses_the_host_the_browser_used(host, expected_host):
-    url = web.viewer_url(host, grpc_port=9876, viewer_port=9091)
+    url = server.viewer_url(host, grpc_port=9876, viewer_port=9091)
     assert url == (
         f"http://{expected_host}:9091/?url=rerun%2Bhttp%3A%2F%2F{expected_host.replace('[', '%5B').replace(']', '%5D').replace(':', '%3A')}"
         "%3A9876%2Fproxy"
@@ -35,9 +41,9 @@ def test_cors_allows_the_viewer_port_when_rerun_supports_it():
     def serve_grpc_026(*, grpc_port=None, server_memory_limit="25%"):
         return ""
 
-    assert web.cors_kwargs(serve_grpc_033, viewer_port=9091) == {"cors_allow_origin": ["http://*:9091"]}
+    assert server.cors_kwargs(serve_grpc_033, viewer_port=9091) == {"cors_allow_origin": ["http://*:9091"]}
     # rerun 0.26 不按来源拦跨源，也没有这个参数
-    assert web.cors_kwargs(serve_grpc_026, viewer_port=9091) == {}
+    assert server.cors_kwargs(serve_grpc_026, viewer_port=9091) == {}
     assert "cors_allow_origin" not in inspect.signature(serve_grpc_026).parameters
 
 
@@ -122,3 +128,65 @@ def test_web_mode_can_be_chosen_explicitly(backends, monkeypatch):
     vu.init_visualization("web")
     vu.log_visualization_data("web", observation={})
     assert backends == ["init_rerun_web", "log_rerun_web_data"]
+
+
+def test_push_process_imports_no_lerobot():
+    """推送进程单独起解释器、只导入 rerun：导入 lerobot 包（utils 一项在端侧计算平台上就要 12 秒）会压在第一条录制上。"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(server.__file__)
+    probe = (
+        "import runpy, sys; runpy.run_path(sys.argv[1], run_name='probe'); "
+        "print(sorted(m for m in sys.modules if m == 'lerobot' or m.startswith('lerobot.')))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe, str(script)], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]"
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_web_preview_end_to_end():
+    """真起一次推送进程：推几帧原始 JPEG 与关节，跳转页回 302 指向查看器，关闭后进程正常退出。"""
+    pytest.importorskip("rerun")
+    import http.client
+
+    import cv2
+
+    from lerobot.cameras import jpeg_passthrough
+
+    web_port, grpc_port = _free_port(), _free_port()
+    preview = web.WebPreview(web_port=web_port, grpc_port=grpc_port, hz=50)
+    try:
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        ok, buf = cv2.imencode(".jpg", frame)
+        assert ok
+        jpeg_passthrough.remember(frame, buf.tobytes())
+        deadline = time.monotonic() + 30
+        location = None
+        while time.monotonic() < deadline and location is None:
+            preview.offer({"top": frame, "shoulder_pan.pos": 1.0}, {"shoulder_pan.pos": 2.0})
+            time.sleep(0.1)
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", web_port, timeout=1)
+                conn.request("GET", "/", headers={"Host": f"127.0.0.1:{web_port}"})
+                resp = conn.getresponse()
+                if resp.status == 302:
+                    location = resp.getheader("Location")
+            except OSError:
+                continue
+        assert location == server.viewer_url(f"127.0.0.1:{web_port}", grpc_port, web_port + 1)
+        assert preview._proc.poll() is None
+    finally:
+        preview.close()
+        jpeg_passthrough.clear()
+    assert preview._proc.returncode == 0

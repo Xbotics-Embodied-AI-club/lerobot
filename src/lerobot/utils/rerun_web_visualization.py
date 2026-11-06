@@ -8,7 +8,9 @@
 - rerun 0.3x 的数据服务默认只接受 localhost 页面的跨源请求，别的机器上打开会被浏览器拦下（服务端照样回 200），
   所以放行「任何主机、查看器那个端口」。0.26 没有这个参数，它本来就不拦。
 - 推送放进子进程：两张 JPEG 的 ``rr.log`` 在端侧计算平台上要十几毫秒，放在录制进程里会和录制抢 GIL；
-  主进程每 0.1 秒取一次最新的画面（默认 10 次/秒）交给子进程。
+  主进程每 0.1 秒取一次最新的画面（默认 10 次/秒）交给子进程。子进程是单独起的解释器跑
+  :mod:`lerobot.utils.rerun_web_server`，只导入 rerun：用 multiprocessing 起会把录制程序整个重新导入，
+  端侧计算平台上约 30 秒单核 CPU，正好压在第一条录制上。
 - 画面由浏览器解码：MJPG 相机送来的原始 JPEG 原样转发（:mod:`lerobot.cameras.jpeg_passthrough`），
   板子上不为预览再压图；查不到原始 JPEG 的画面（旋转过、别的相机）才在后台线程里压。
 - 预览让着录制：子进程降一档优先级。真机录制时四个核都忙，预览抢 CPU 就是录制掉帧。
@@ -20,19 +22,17 @@
 from __future__ import annotations
 
 import contextlib
-import inspect
 import logging
-import multiprocessing
 import os
-import queue
+import pickle
 import socket
+import subprocess
+import sys
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import numpy as np
 
@@ -49,24 +49,6 @@ DEFAULT_GRPC_PORT = 9876  # rerun 数据服务
 DEFAULT_HZ = 10.0
 DEFAULT_JPEG_QUALITY = 80
 DEFAULT_MEMORY_LIMIT = "64MB"  # 数据服务为晚连上的浏览器缓冲的上限；命令行版默认是系统内存的 25%
-
-
-def viewer_url(host_header: str, grpc_port: int, viewer_port: int) -> str:
-    """按浏览器访问板子用的主机名，拼出查看器地址（带上数据服务地址）。"""
-    host = host_header
-    if host.startswith("["):  # IPv6：[addr]:port
-        host = host[: host.index("]") + 1]
-    elif host.count(":") == 1:
-        host = host.rsplit(":", 1)[0]
-    data = quote(f"rerun+http://{host}:{grpc_port}/proxy", safe="")
-    return f"http://{host}:{viewer_port}/?url={data}"
-
-
-def cors_kwargs(serve_grpc: Callable[..., Any], viewer_port: int) -> dict[str, list[str]]:
-    """rerun 有 ``cors_allow_origin`` 时放行查看器端口的任何主机；没有（0.26）就不传。"""
-    if "cors_allow_origin" in inspect.signature(serve_grpc).parameters:
-        return {"cors_allow_origin": [f"http://*:{viewer_port}"]}
-    return {}
 
 
 def local_address() -> str:
@@ -137,43 +119,6 @@ def snapshot(observation: RobotObservation | None, action: RobotAction | None) -
     return item
 
 
-def _serve(jobs: Any, web_port: int, grpc_port: int, memory_limit: str) -> None:
-    """子进程：起 rerun 数据服务、网页查看器与跳转页，把收到的 JPEG 与标量推出去。"""
-    with contextlib.suppress(OSError):
-        os.nice(5)  # 让着录制：四个核都忙时先保录制不掉帧，预览慢一点无妨
-    import rerun as rr
-
-    viewer_port = web_port + 1
-    rr.init("recording")
-    rr.serve_grpc(
-        grpc_port=grpc_port, server_memory_limit=memory_limit, **cors_kwargs(rr.serve_grpc, viewer_port)
-    )
-    rr.serve_web_viewer(web_port=viewer_port, open_browser=False)
-
-    class ToViewer(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            self.send_response(302)
-            self.send_header("Location", viewer_url(self.headers.get("Host") or "", grpc_port, viewer_port))
-            self.end_headers()
-
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            pass
-
-    server = ThreadingHTTPServer(("0.0.0.0", web_port), ToViewer)  # nosec B104 —— 就是要局域网能连
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
-    while (job := jobs.get()) is not None:
-        jpegs, obs_scalars, act_scalars = job
-        for key, data in jpegs.items():
-            rr.log(key, rr.EncodedImage(contents=data, media_type="image/jpeg"), static=True)
-        # 关节读数与动作各合成一条推（逐个值推一条在端侧计算平台上要 7 ms，合并后 0.8 ms）
-        if obs_scalars:
-            rr.log(f"{OBS_STR}.state", rr.Scalars(list(obs_scalars.values())))
-        if act_scalars:
-            rr.log(ACTION, rr.Scalars(list(act_scalars.values())))
-    server.shutdown()
-
-
 class WebPreview:
     """录制进程这一侧：限频取最新的一份，后台压 JPEG，交给子进程推出去。"""
 
@@ -185,12 +130,17 @@ class WebPreview:
         jpeg_quality: int = DEFAULT_JPEG_QUALITY,
         memory_limit: str = DEFAULT_MEMORY_LIMIT,
     ):
-        ctx = multiprocessing.get_context("spawn")
-        self._jobs = ctx.Queue(maxsize=2)
-        self._proc = ctx.Process(
-            target=_serve, args=(self._jobs, web_port, grpc_port, memory_limit), daemon=True
+        server = Path(__file__).with_name("rerun_web_server.py")
+        self._proc = subprocess.Popen(  # nosec B603 —— 本包自带的脚本，参数是端口与内存上限
+            [
+                sys.executable,
+                str(server),
+                f"--web-port={web_port}",
+                f"--grpc-port={grpc_port}",
+                f"--memory-limit={memory_limit}",
+            ],
+            stdin=subprocess.PIPE,
         )
-        self._proc.start()
         self._slot = LatestSlot(1.0 / hz)
         self._quality = jpeg_quality
         self._stop = threading.Event()
@@ -218,17 +168,30 @@ class WebPreview:
                 )
                 if ok:
                     jpegs[key] = buf.tobytes()
-            # 子进程忙：这一帧不推，下一帧更新
-            with contextlib.suppress(queue.Full):
-                self._jobs.put_nowait((jpegs, item.observation_scalars, item.action_scalars))
+            # 关节读数与动作各合成一条推（逐个值推一条在端侧计算平台上要 7 ms，合并后 0.8 ms）
+            scalars = {}
+            if item.observation_scalars:
+                scalars[f"{OBS_STR}.state"] = list(item.observation_scalars.values())
+            if item.action_scalars:
+                scalars[ACTION] = list(item.action_scalars.values())
+            # 推送进程忙时这里等着，期间新到的画面在 LatestSlot 里顶掉旧的：不排队、不拖录制
+            try:
+                assert self._proc.stdin is not None
+                pickle.dump((jpegs, scalars), self._proc.stdin)
+                self._proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                logger.warning("网页预览的推送进程已退出，录制照常进行，不再推送预览")
+                return
 
     def close(self) -> None:
         self._stop.set()
         self._pump.join(timeout=2)
-        with contextlib.suppress(Exception):
-            self._jobs.put(None, timeout=2)
-        self._proc.join(timeout=5)
-        if self._proc.is_alive():
+        if self._proc.stdin is not None:
+            with contextlib.suppress(OSError):
+                self._proc.stdin.close()  # 推送进程读到 EOF 后退出
+        try:
+            self._proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
             self._proc.terminate()
 
 
