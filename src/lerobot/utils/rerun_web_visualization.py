@@ -8,8 +8,10 @@
 - rerun 0.3x 的数据服务默认只接受 localhost 页面的跨源请求，别的机器上打开会被浏览器拦下（服务端照样回 200），
   所以放行「任何主机、查看器那个端口」。0.26 没有这个参数，它本来就不拦。
 - 推送放进子进程：两张 JPEG 的 ``rr.log`` 在端侧计算平台上要十几毫秒，放在录制进程里会和录制抢 GIL；
-  主进程每 0.1 秒取一次最新的画面（默认 10 次/秒），后台线程压 JPEG 后交给子进程。
-  实测录制 28.7 fps 不受影响，预览 10 次/秒。
+  主进程每 0.1 秒取一次最新的画面（默认 10 次/秒）交给子进程。
+- 画面由浏览器解码：MJPG 相机送来的原始 JPEG 原样转发（:mod:`lerobot.cameras.jpeg_passthrough`），
+  板子上不为预览再压图；查不到原始 JPEG 的画面（旋转过、别的相机）才在后台线程里压。
+- 预览让着录制：子进程降一档优先级。真机录制时四个核都忙，预览抢 CPU 就是录制掉帧。
 
 注意：没有显卡加速的浏览器（软件光栅）里，rerun 0.33 的网页查看器一收到数据就卡死，0.26.2 正常；
 板子环境钉 ``rerun-sdk==0.26.2``（``viz`` 组声明的范围内）。
@@ -34,6 +36,7 @@ from urllib.parse import quote
 
 import numpy as np
 
+from lerobot.cameras import jpeg_passthrough
 from lerobot.lerobot_types import RobotAction, RobotObservation
 
 from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
@@ -104,6 +107,7 @@ class LatestSlot:
 @dataclass
 class PreviewItem:
     images: dict[str, np.ndarray] = field(default_factory=dict)
+    jpegs: dict[str, bytes] = field(default_factory=dict)
     observation_scalars: dict[str, float] = field(default_factory=dict)
     action_scalars: dict[str, float] = field(default_factory=dict)
 
@@ -113,14 +117,19 @@ def _is_scalar(v: Any) -> bool:
 
 
 def snapshot(observation: RobotObservation | None, action: RobotAction | None) -> PreviewItem:
-    """取一份要推的数据：画面复制（相机驱动可能复用缓冲区），标量转 float，键名同 log_rerun_data。"""
+    """取一份要推的数据：画面优先取相机的原始 JPEG，没有才复制原图（相机驱动可能复用缓冲区）；
+    标量转 float，键名同 log_rerun_data。"""
     item = PreviewItem()
     for k, v in (observation or {}).items():
         key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
         if _is_scalar(v):
             item.observation_scalars[key] = float(v)
         elif isinstance(v, np.ndarray) and v.ndim == 3 and v.dtype == np.uint8 and v.shape[-1] == 3:
-            item.images[key] = v.copy()
+            jpeg = jpeg_passthrough.jpeg_of(v)
+            if jpeg is not None:
+                item.jpegs[key] = jpeg
+            else:
+                item.images[key] = v.copy()
     for k, v in (action or {}).items():
         key = k if str(k).startswith(ACTION_PREFIX) else f"{ACTION}.{k}"
         if _is_scalar(v):
@@ -131,7 +140,7 @@ def snapshot(observation: RobotObservation | None, action: RobotAction | None) -
 def _serve(jobs: Any, web_port: int, grpc_port: int, memory_limit: str) -> None:
     """子进程：起 rerun 数据服务、网页查看器与跳转页，把收到的 JPEG 与标量推出去。"""
     with contextlib.suppress(OSError):
-        os.nice(-5)  # 录制线程余量大；预览让一点优先级，否则 4 个核都忙时它抢不到 CPU
+        os.nice(5)  # 让着录制：四个核都忙时先保录制不掉帧，预览慢一点无妨
     import rerun as rr
 
     viewer_port = web_port + 1
@@ -202,7 +211,7 @@ class WebPreview:
             item = self._slot.take()
             if item is None:
                 continue
-            jpegs = {}
+            jpegs = dict(item.jpegs)
             for key, rgb in item.images.items():
                 ok, buf = cv2.imencode(
                     ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, self._quality]

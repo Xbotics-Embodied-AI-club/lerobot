@@ -7,6 +7,7 @@
 import queue
 import subprocess
 import threading
+from fractions import Fraction
 
 import numpy as np
 import pytest
@@ -112,9 +113,60 @@ def test_gst_command_and_env():
     assert cmd[0] == "gst-launch-1.0"
     assert "rawvideoparse width=640 height=480 format=rgb framerate=30/1" in pipeline
     assert "mpph264enc rc-mode=fixqp qp-init=30 gop=2" in pipeline
+    assert "mp4mux trak-timescale=12000" in pipeline
     assert "filesink location=/tmp/out.mp4" in pipeline
     # 板子上有落在 4 GB 以上的物理内存，MPP 插件默认借 RGA 搬帧会写坏内存、整机挂死
     assert rkmpp.gst_env()["GST_MPP_NO_RGA"] == "1"
+
+
+def _write_episode(path, fps: int, timescale: int, n_frames: int = 6) -> None:
+    """按给定时间单位写一段 MP4，模拟 MPP（mp4mux）写出的一条。
+
+    FFmpeg 的 MP4 封装器默认把低于 10000 的时间单位逐次乘 2，``video_track_timescale`` 让它照写不改，
+    与 mp4mux 一样。
+    """
+    import av
+
+    with av.open(str(path), "w", options={"video_track_timescale": str(timescale)}) as out:
+        stream = out.add_stream("mpeg4", rate=fps)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        stream.time_base = Fraction(1, timescale)
+        stream.codec_context.time_base = Fraction(1, fps)
+        for i in range(n_frames):
+            rgb = np.full((48, 64, 3), i * 30, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(rgb, format="rgb24").reformat(format="yuv420p")
+            frame.pts, frame.time_base = i, Fraction(1, fps)
+            for packet in stream.encode(frame):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+
+
+def _append_three_episodes(tmp_path, fps: int, timescale: int) -> int:
+    """照录制时的存法：第一条直接当文件，第二、三条依次拼到它后面；返回拼完的帧数。"""
+    import av
+
+    target = tmp_path / "file-000.mp4"
+    _write_episode(target, fps, timescale)
+    for k in range(2):
+        episode = tmp_path / f"ep{k}.mp4"
+        _write_episode(episode, fps, timescale)
+        video_utils.concatenate_video_files([target, episode], target)
+    with av.open(str(target)) as container:
+        return sum(1 for p in container.demux(video=0) if p.dts is not None)
+
+
+@pytest.mark.parametrize("fps", [10, 15, 20, 25, 30, 50, 60])
+def test_mpp_episodes_append_three_times_into_one_file(fps, tmp_path):
+    """MPP 段的时间单位等于拼接后文件的，同一文件里连拼三条不报时间戳倒退。"""
+    assert rkmpp.mp4_timescale(fps) % fps == 0
+    assert _append_three_episodes(tmp_path, fps, rkmpp.mp4_timescale(fps)) == 18
+
+
+def test_mp4mux_default_timescale_breaks_the_third_episode(tmp_path):
+    """反例：mp4mux 自动取的 1/3000（30 fps）拼第三条时报错，正是板子上的现场。"""
+    with pytest.raises(ValueError):
+        _append_three_episodes(tmp_path, 30, 3000)
 
 
 def test_writer_keeps_gst_output_off_the_terminal(monkeypatch, tmp_path):

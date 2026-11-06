@@ -31,10 +31,12 @@ from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for num
 if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
+import numpy as np
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 
+from .. import jpeg_passthrough
 from ..camera import Camera
 from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
@@ -116,6 +118,8 @@ class OpenCVCamera(Camera):
         self.latest_frame: NDArray[Any] | None = None
         self.latest_timestamp: float | None = None
         self.new_frame_event: Event = Event()
+        # MJPG 相机这一帧的原始 JPEG（Xbotics：直通网页预览，见 lerobot.cameras.jpeg_passthrough）
+        self._last_jpeg: bytes | None = None
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = config.backend
@@ -244,6 +248,11 @@ class OpenCVCamera(Camera):
             # Set FOURCC last to make sure the requested pixel format is actually enforced.
             self._validate_fourcc()
 
+        # Xbotics：V4L2 的 MJPG 相机让 OpenCV 交出原始 JPEG、自己解码，原始 JPEG 留给网页预览直接转发。
+        # 只认 V4L2：别的后端（如把图片文件当相机）关掉 CONVERT_RGB 给的是灰度图，不是 JPEG。
+        if self.config.fourcc == "MJPG" and self.videocapture.getBackendName() == "V4L2":
+            self.videocapture.set(cv2.CAP_PROP_CONVERT_RGB, 0)
+
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
 
@@ -371,6 +380,14 @@ class OpenCVCamera(Camera):
         if not ret:
             raise RuntimeError(f"{self} read failed (status={ret}).")
 
+        self._last_jpeg = None
+        if frame.ndim == 1 or (frame.ndim == 2 and frame.shape[0] == 1):  # 原始 JPEG（CONVERT_RGB 关掉时）
+            jpeg = frame.tobytes()
+            frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                raise RuntimeError(f"{self} could not decode the MJPG frame ({len(jpeg)} bytes).")
+            self._last_jpeg = jpeg
+
         return frame
 
     @check_if_not_connected
@@ -472,6 +489,8 @@ class OpenCVCamera(Camera):
                 raw_frame = self._read_from_hardware()
                 processed_frame = self._postprocess_image(raw_frame)
                 capture_time = time.perf_counter()
+                if self._last_jpeg is not None and self.rotation is None:  # 旋转过的画面与 JPEG 对不上
+                    jpeg_passthrough.remember(processed_frame, self._last_jpeg)
 
                 with self.frame_lock:
                     self.latest_frame = processed_frame

@@ -67,6 +67,21 @@ def rkmpp_available() -> bool:
     return probe.returncode == 0
 
 
+def mp4_timescale(fps: int) -> int:
+    """MPP 写出的 MP4 视频轨时间单位（每秒多少格）：取 FFmpeg 重新封装时会保留不变的值。
+
+    同一个视频文件里一条接一条往后拼（:func:`lerobot.datasets.video_utils.concatenate_video_files`，
+    FFmpeg 的 concat 分离器 + PyAV 重新封装）要求各段时间单位相同。mp4mux 自动取的是 ``fps × 100``
+    （30 fps 为 1/3000），FFmpeg 的 mp4 封装器把低于 10000 的时间单位逐次乘 2（1/3000 → 1/12000）：
+    第一次拼完的文件变成 1/12000，再拼一条 1/3000 的新段，新段时间戳按错的单位读，比前一段末尾还早，
+    报 ``non monotonically increasing dts``。这里按同一规则算出 12000，第一段就写成它。
+    """
+    timescale = fps * 100
+    while timescale < 10000:
+        timescale *= 2
+    return timescale
+
+
 def gst_command(video_path: str | Path, width: int, height: int, fps: int, qp: int, gop: int) -> list[str]:
     """把标准输入里的 RGB 原图编成 H.264 MP4 的 GStreamer 命令。
 
@@ -76,7 +91,8 @@ def gst_command(video_path: str | Path, width: int, height: int, fps: int, qp: i
     pipeline = (
         "fdsrc fd=0 ! "
         f"rawvideoparse width={width} height={height} format=rgb framerate={fps}/1 ! "
-        f"mpph264enc rc-mode=fixqp qp-init={qp} gop={gop} ! h264parse ! mp4mux ! filesink"
+        f"mpph264enc rc-mode=fixqp qp-init={qp} gop={gop} ! h264parse ! "
+        f"mp4mux trak-timescale={mp4_timescale(fps)} ! filesink"
     )
     return ["gst-launch-1.0", "-q", *pipeline.split(), f"location={video_path}"]
 
