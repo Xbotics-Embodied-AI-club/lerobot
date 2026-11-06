@@ -145,14 +145,15 @@ class RunningQuantileStats:
             # Redistribute existing histogram counts to new bins
             # We need to map each old bin center to the new bins
             old_centers = (old_edges[:-1] + old_edges[1:]) / 2
-            new_hist = np.zeros(self._num_quantile_bins)
 
-            for old_center, count in zip(old_centers, old_hist, strict=False):
-                if count > 0:
-                    # Find which new bin this old center belongs to
-                    bin_idx = np.searchsorted(new_edges, old_center) - 1
-                    bin_idx = max(0, min(bin_idx, self._num_quantile_bins - 1))
-                    new_hist[bin_idx] += count
+            # Xbotics：整批算出每个旧桶落进哪个新桶再累加，结果与逐桶循环逐位相同。逐桶的 Python 循环
+            # （5000 桶 × 每通道）在端侧计算平台上一次 50 ms 且一直占着 GIL，边录边编时录制循环被它拖得掉帧。
+            occupied = old_hist > 0
+            bin_idx = np.searchsorted(new_edges, old_centers[occupied]) - 1
+            bin_idx = np.clip(bin_idx, 0, self._num_quantile_bins - 1)
+            new_hist = np.bincount(
+                bin_idx, weights=old_hist[occupied], minlength=self._num_quantile_bins
+            ).astype(np.float64)
 
             self._histograms[i] = new_hist
             self._bin_edges[i] = new_edges
