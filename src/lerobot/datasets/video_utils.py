@@ -772,6 +772,76 @@ def _open_rkmpp_writer(
     return RkmppH264Writer(video_path, width, height, fps, qp=qp, gop=gop)
 
 
+def _as_hwc(frame_data: Any, is_depth: bool) -> Any:
+    """Ensure HWC (RGB or depth) uint8 (RGB only) numpy array."""
+    if isinstance(frame_data, np.ndarray):
+        if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
+            # CHW -> HWC
+            frame_data = frame_data.transpose(1, 2, 0)
+        if not is_depth and frame_data.dtype != np.uint8:
+            frame_data = (frame_data * 255).astype(np.uint8)
+    return frame_data
+
+
+def _update_frame_stats(stats_tracker: Any, frame_data: np.ndarray) -> None:
+    """Update stats with downsampled frame (per-channel stats like compute_episode_stats)."""
+    from .compute_stats import auto_downsample_height_width
+
+    img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
+    img_downsampled = auto_downsample_height_width(img_chw)
+    # Reshape CHW to (H*W, C) for per-channel stats
+    channels = img_downsampled.shape[0]
+    img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+    stats_tracker.update(img_for_stats)
+
+
+class _DirectMppEncoder:
+    """一路相机一条的 MPP 编码，不另开线程（Xbotics）：录制主线程直接把画面写进 gst 编码子进程的管道。
+
+    端侧计算平台上每路相机一个编码线程时，录制主线程读舵机会被拖住：同一进程里这两个线程一直在拿放 GIL，
+    真机上读一次舵机超过 10 ms 的次数是直写的十倍（36 次对 2–4 次 / 1200 次）。管道开到 1 MB，
+    写一帧就是一次拷贝；写入本身就复制了画面，送进来的数组不必再拷一份。
+    """
+
+    def __init__(self, video_path: Path, fps: int, video_encoder: VideoEncoderConfig):
+        from .compute_stats import RunningQuantileStats
+
+        self.video_path = video_path
+        self.fps = fps
+        self.video_encoder = video_encoder
+        self.stats_every = video_encoder.resolved_stats_every()
+        self.stats_tracker = RunningQuantileStats()
+        self.frame_count = 0
+        self.writer: RkmppH264Writer | None = None
+        self.shape: tuple[int, int] | None = None
+
+    def open(self, height: int, width: int) -> None:
+        """启动编码子进程（gst 启动、MPP 初始化要一点时间，预先启动的就不占录制的第一拍）。"""
+        Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
+        self.writer = _open_rkmpp_writer(self.video_path, width, height, self.fps, self.video_encoder)
+        self.shape = (height, width)
+
+    def feed(self, image: np.ndarray) -> None:
+        frame_data = _as_hwc(image, is_depth=False)
+        if self.writer is None:
+            self.open(*frame_data.shape[:2])
+        assert self.writer is not None
+        self.writer.write(frame_data)
+        # Xbotics：每几帧算一次图像统计（ARM 板子默认 10）；前两帧总算，保证统计至少两个样本
+        if self.frame_count < 2 or self.frame_count % self.stats_every == 0:
+            _update_frame_stats(self.stats_tracker, frame_data)
+        self.frame_count += 1
+
+    def finish(self) -> dict | None:
+        if self.writer is not None:
+            self.writer.close()
+        return self.stats_tracker.get_statistics() if self.frame_count >= 2 else None
+
+    def abort(self) -> None:
+        if self.writer is not None:
+            self.writer.abort()
+
+
 class _CameraEncoderThread(threading.Thread):
     """A thread that encodes video frames streamed via a queue into an MP4 file.
 
@@ -802,7 +872,7 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
     def run(self) -> None:
-        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
+        from .compute_stats import RunningQuantileStats
 
         container = None
         output_stream = None
@@ -828,13 +898,7 @@ class _CameraEncoderThread(threading.Thread):
                     # Sentinel: flush and close
                     break
 
-                # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
-                if isinstance(frame_data, np.ndarray):
-                    if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
-                        # CHW -> HWC
-                        frame_data = frame_data.transpose(1, 2, 0)
-                    if not self.is_depth and frame_data.dtype != np.uint8:
-                        frame_data = (frame_data * 255).astype(np.uint8)
+                frame_data = _as_hwc(frame_data, self.is_depth)
 
                 if use_rkmpp:
                     if writer is None:
@@ -880,13 +944,7 @@ class _CameraEncoderThread(threading.Thread):
                         container.mux(packet)
 
                 if frame_count < 2 or frame_count % stats_every == 0:
-                    # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
-                    img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
-                    img_downsampled = auto_downsample_height_width(img_chw)
-                    # Reshape CHW to (H*W, C) for per-channel stats
-                    channels = img_downsampled.shape[0]
-                    img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
-                    stats_tracker.update(img_for_stats)
+                    _update_frame_stats(stats_tracker, frame_data)
 
                 frame_count += 1
 
@@ -966,6 +1024,11 @@ class StreamingVideoEncoder:
         self._stop_events: dict[str, threading.Event] = {}
         self._video_paths: dict[str, Path] = {}
         self._dropped_frames: dict[str, int] = {}
+        # Xbotics：MPP 编码的相机不开线程，由录制主线程直写（_DirectMppEncoder）；
+        # 存完一条就按已知尺寸预先启动下一条的编码子进程，放在 _spare 里
+        self._direct: dict[str, _DirectMppEncoder] = {}
+        self._spare: dict[str, _DirectMppEncoder] = {}
+        self._temp_root: Path | None = None
         self._episode_active = False
         self._closed = False
 
@@ -987,8 +1050,16 @@ class StreamingVideoEncoder:
 
         if depth_video_keys is None:
             depth_video_keys = []
+        self._temp_root = Path(temp_dir)
 
         for video_key in video_keys:
+            encoder = self._depth_encoder if video_key in depth_video_keys else self._rgb_encoder
+            if encoder.vcodec == RKMPP_VCODEC:
+                direct = self._spare.pop(video_key, None) or self._new_direct(video_key, encoder)
+                self._direct[video_key] = direct
+                self._video_paths[video_key] = direct.video_path
+                continue
+
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
             result_queue: queue.Queue = queue.Queue(maxsize=1)
             stop_event = threading.Event()
@@ -996,7 +1067,6 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            encoder = self._depth_encoder if video_key in depth_video_keys else self._rgb_encoder
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
@@ -1016,6 +1086,24 @@ class StreamingVideoEncoder:
 
         self._episode_active = True
 
+    def _new_direct(self, video_key: str, encoder: VideoEncoderConfig) -> "_DirectMppEncoder":
+        assert self._temp_root is not None
+        temp_video_dir = Path(tempfile.mkdtemp(dir=self._temp_root))
+        video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
+        return _DirectMppEncoder(video_path, self.fps, encoder)
+
+    def _prepare_next_episode(self, video_key: str, finished: "_DirectMppEncoder") -> None:
+        """按这一条的画面尺寸预先启动下一条的编码子进程；起不来就算了，下一条照旧在第一帧时启动。"""
+        if finished.shape is None or video_key in self._spare:
+            return
+        try:
+            spare = self._new_direct(video_key, finished.video_encoder)
+            spare.open(*finished.shape)
+        except Exception as e:
+            logger.warning(f"Could not pre-start the encoder for the next episode of {video_key}: {e}")
+            return
+        self._spare[video_key] = spare
+
     def feed_frame(self, video_key: str, image: np.ndarray) -> None:
         """Feed a frame to the encoder for a specific camera.
 
@@ -1033,6 +1121,13 @@ class StreamingVideoEncoder:
         """
         if not self._episode_active:
             raise RuntimeError("No active episode. Call start_episode() first.")
+
+        if video_key in self._direct:
+            try:
+                self._direct[video_key].feed(image)
+            except Exception as e:
+                raise RuntimeError(f"Encoder for {video_key} crashed: {e}") from e
+            return
 
         thread = self._threads[video_key]
         if not thread.is_alive():
@@ -1080,6 +1175,14 @@ class StreamingVideoEncoder:
         for video_key in self._frame_queues:
             self._frame_queues[video_key].put(None)
 
+        for video_key, direct in self._direct.items():
+            try:
+                results[video_key] = (direct.video_path, direct.finish())
+            except Exception as e:
+                raise RuntimeError(f"Encoder thread for {video_key} failed: {e}") from e
+        for video_key, direct in self._direct.items():
+            self._prepare_next_episode(video_key, direct)
+
         # Wait for all threads and collect results
         for video_key in self._threads:
             self._threads[video_key].join(timeout=120)
@@ -1108,6 +1211,10 @@ class StreamingVideoEncoder:
         if not self._episode_active:
             return
 
+        for direct in self._direct.values():
+            direct.abort()
+            shutil.rmtree(str(direct.video_path.parent), ignore_errors=True)
+
         # Signal all threads to stop
         for video_key in self._stop_events:
             self._stop_events[video_key].set()
@@ -1130,6 +1237,10 @@ class StreamingVideoEncoder:
             return
         if self._episode_active:
             self.cancel_episode()
+        for spare in self._spare.values():
+            spare.abort()
+            shutil.rmtree(str(spare.video_path.parent), ignore_errors=True)
+        self._spare.clear()
         self._closed = True
 
     def _cleanup(self) -> None:
@@ -1143,6 +1254,7 @@ class StreamingVideoEncoder:
         self._threads.clear()
         self._stop_events.clear()
         self._video_paths.clear()
+        self._direct.clear()
 
 
 @dataclass

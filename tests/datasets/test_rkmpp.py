@@ -8,6 +8,7 @@ import queue
 import subprocess
 import threading
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -248,6 +249,123 @@ def test_streaming_encoder_thread_feeds_mpp(on_rockchip, fake_writer, tmp_path):
     assert status == "ok" and stats is not None
     (writer,) = fake_writer.instances
     assert len(writer.frames) == 12 and writer.closed
+
+
+# ---------------------------------------------------------------- 主线程直写（不开编码线程）
+
+KEYS = ["observation.images.top", "observation.images.wrist"]
+
+
+def _episode_frames(n: int, offset: int = 0) -> list[np.ndarray]:
+    return [np.full((48, 64, 3), (i * 23 + offset) % 256, dtype=np.uint8) for i in range(n)]
+
+
+def _expected_stats(frames: list[np.ndarray], every: int) -> dict:
+    from lerobot.datasets.compute_stats import RunningQuantileStats
+
+    tracker = RunningQuantileStats()
+    for i, frame in enumerate(frames):
+        if i < 2 or i % every == 0:
+            video_utils._update_frame_stats(tracker, frame)
+    return tracker.get_statistics()
+
+
+def test_mpp_streaming_writes_from_the_caller_without_threads(on_rockchip, fake_writer, tmp_path):
+    """板子上 MPP 编码不开编码线程：送进来的帧按顺序写进编码子进程，统计与同样抽样规则算的逐位相同。"""
+    encoder = video_utils.StreamingVideoEncoder(
+        fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP, stats_every=10)
+    )
+    encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+    frames = _episode_frames(25)
+    for frame in frames:
+        for key in KEYS:
+            encoder.feed_frame(key, frame)
+    assert encoder._threads == {}
+    results = encoder.finish_episode()
+
+    first_two = fake_writer.instances[:2]
+    assert [w.closed for w in first_two] == [True, True]
+    for writer in first_two:
+        assert [int(f[0, 0, 0]) for f in writer.frames] == [int(f[0, 0, 0]) for f in frames]
+    expected = _expected_stats(frames, every=10)
+    for key in KEYS:
+        path, stats = results[key]
+        assert path.name == f"{key}_streaming.mp4"
+        for name, value in expected.items():
+            np.testing.assert_array_equal(stats[name], value)
+    encoder.close()
+
+
+def test_mpp_streaming_prestarts_the_next_episode(on_rockchip, fake_writer, tmp_path):
+    """存完一条就按画面尺寸启动下一条的编码子进程；下一条直接用它，第一帧时不再新开。"""
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP))
+    encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+    for frame in _episode_frames(3):
+        for key in KEYS:
+            encoder.feed_frame(key, frame)
+    first = encoder.finish_episode()
+    assert len(fake_writer.instances) == 4  # 两路这一条的 + 两路预先启动的
+    spares = fake_writer.instances[2:]
+    assert all(w.size == (64, 48) and not w.closed and not w.frames for w in spares)
+
+    encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+    for frame in _episode_frames(3, offset=7):
+        for key in KEYS:
+            encoder.feed_frame(key, frame)
+    second = encoder.finish_episode()
+    assert len(spares[0].frames) == 3 and len(spares[1].frames) == 3
+    for key in KEYS:
+        assert second[key][0].parent != first[key][0].parent
+    encoder.close()
+
+
+def test_mpp_streaming_cancel_and_close_clean_up(on_rockchip, fake_writer, tmp_path):
+    """重录（取消这一条）停掉写入器、删掉它的临时目录；收尾时还没用上的预先启动的也停掉、删掉。
+
+    存完的那几条的临时目录留给数据集存盘时搬走，这里不动。
+    """
+
+    def record_one() -> set:
+        encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+        for frame in _episode_frames(3):
+            for key in KEYS:
+                encoder.feed_frame(key, frame)
+        return {path.parent for path, _ in encoder.finish_episode().values()}
+
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP))
+    finished_dirs = record_one()
+    spares = fake_writer.instances[-2:]
+    spare_dirs = {Path(w.video_path).parent for w in spares}
+    assert len(spare_dirs) == 2 and all(d.is_dir() for d in spare_dirs)
+
+    # 第二条用上了预先启动的编码子进程，中途取消
+    encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+    encoder.feed_frame(KEYS[0], _episode_frames(1)[0])
+    encoder.cancel_episode()
+    assert all(w.closed for w in spares)
+    assert not any(d.exists() for d in spare_dirs)
+
+    # 第三条录完又预先启动了两个，收尾时它们被停掉、删掉
+    finished_dirs |= record_one()
+    last_spares = fake_writer.instances[-2:]
+    last_spare_dirs = {Path(w.video_path).parent for w in last_spares}
+    encoder.close()
+    assert all(w.closed for w in last_spares)
+    assert not any(d.exists() for d in last_spare_dirs)
+    assert {d for d in tmp_path.iterdir() if d.is_dir()} == finished_dirs
+
+
+def test_mpp_streaming_writer_error_surfaces_on_feed(on_rockchip, monkeypatch, tmp_path):
+    class BrokenWriter(FakeWriter):
+        def write(self, rgb):
+            raise BrokenPipeError("gst exited")
+
+    monkeypatch.setattr(video_utils, "RkmppH264Writer", BrokenWriter)
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP))
+    encoder.start_episode(video_keys=KEYS[:1], temp_dir=tmp_path)
+    with pytest.raises(RuntimeError, match="gst exited"):
+        encoder.feed_frame(KEYS[0], _episode_frames(1)[0])
+    encoder.close()
 
 
 # ---------------------------------------------------------------- 统计抽样
