@@ -266,7 +266,7 @@ def _expected_stats(frames: list[np.ndarray], every: int) -> dict:
     tracker = RunningQuantileStats()
     for i, frame in enumerate(frames):
         if i < 2 or i % every == 0:
-            video_utils._update_frame_stats(tracker, frame)
+            tracker.update(video_utils._stats_batch(frame))
     return tracker.get_statistics()
 
 
@@ -353,6 +353,49 @@ def test_mpp_streaming_cancel_and_close_clean_up(on_rockchip, fake_writer, tmp_p
     assert all(w.closed for w in last_spares)
     assert not any(d.exists() for d in last_spare_dirs)
     assert {d for d in tmp_path.iterdir() if d.is_dir()} == finished_dirs
+
+
+def test_stats_worker_imports_no_lerobot():
+    """统计进程按路径加载 RunningQuantileStats，不导入 lerobot 包（端侧计算平台上 lerobot.datasets 一导入就几十秒）。"""
+    import subprocess
+    import sys
+
+    from lerobot.datasets import stats_worker
+
+    probe = (
+        "import runpy, sys; m = runpy.run_path(sys.argv[1], run_name='probe'); m['load_tracker_class'](); "
+        "print(sorted(k for k in sys.modules if k == 'lerobot' or k.startswith('lerobot.')))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe, stats_worker.__file__], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]"
+
+
+def test_stats_process_matches_in_process_stats():
+    """统计进程算出的与本进程里依次 update 的逐位相同；两个键互不干扰；出错在取结果时报出来。"""
+    from lerobot.datasets.compute_stats import RunningQuantileStats
+
+    rng = np.random.default_rng(0)
+    batches = {k: [rng.integers(0, 256, (300, 3), dtype=np.uint8) for _ in range(5)] for k in ("a", "b")}
+    stats = video_utils.StatsProcess()
+    try:
+        for i in range(5):
+            for key in ("a", "b"):
+                stats.update(key, batches[key][i])
+        for key in ("a", "b"):
+            expected = RunningQuantileStats()
+            for batch in batches[key]:
+                expected.update(batch)
+            got = stats.get(key)
+            for name, value in expected.get_statistics().items():
+                np.testing.assert_array_equal(got[name], value)
+        stats.update("c", np.zeros((3, 3), dtype=np.uint8))
+        stats.update("c", np.zeros((3, 4), dtype=np.uint8))  # 列数不一致，原类会报错
+        with pytest.raises(RuntimeError, match="does not match"):
+            stats.get("c")
+    finally:
+        stats.close()
 
 
 def test_mpp_streaming_writer_error_surfaces_on_feed(on_rockchip, monkeypatch, tmp_path):

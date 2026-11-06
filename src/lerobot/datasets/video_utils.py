@@ -16,10 +16,14 @@
 import contextlib
 import glob
 import importlib
+import itertools
 import logging
 import os
+import pickle
 import queue
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import warnings
@@ -783,16 +787,66 @@ def _as_hwc(frame_data: Any, is_depth: bool) -> Any:
     return frame_data
 
 
-def _update_frame_stats(stats_tracker: Any, frame_data: np.ndarray) -> None:
-    """Update stats with downsampled frame (per-channel stats like compute_episode_stats)."""
+def _stats_batch(frame_data: np.ndarray) -> np.ndarray:
+    """Downsampled frame as (H*W, C) vectors for per-channel stats (like compute_episode_stats)."""
     from .compute_stats import auto_downsample_height_width
 
     img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
     img_downsampled = auto_downsample_height_width(img_chw)
     # Reshape CHW to (H*W, C) for per-channel stats
     channels = img_downsampled.shape[0]
-    img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
-    stats_tracker.update(img_for_stats)
+    return img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+
+
+class StatsProcess:
+    """边录边编的图像统计放在单独的进程里算（Xbotics，见 :mod:`lerobot.datasets.stats_worker`）。
+
+    录制主线程每次只发一批缩小后的画面（640×480 缩到 160×120，约 57 KB），不等结果；
+    一条录完时 :meth:`get` 取回统计。与在本进程里依次 update 逐位相同（同一个类、同样的批次、同样的顺序）。
+    """
+
+    def __init__(self):
+        worker = Path(__file__).with_name("stats_worker.py")
+        self._proc = subprocess.Popen(  # nosec B603 —— 本包自带的脚本
+            [sys.executable, str(worker)], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
+        assert self._proc.stdin is not None and self._proc.stdout is not None
+        self._stdin, self._stdout = self._proc.stdin, self._proc.stdout
+        # 两路相机同一拍各发一批，管道开大到装得下，主线程写入不等统计进程读走
+        with contextlib.suppress(AttributeError, OSError):
+            import fcntl
+
+            fcntl.fcntl(self._stdin.fileno(), fcntl.F_SETPIPE_SZ, 1 << 20)
+        self._lock = threading.Lock()
+
+    def _send(self, message: tuple) -> None:
+        pickle.dump(message, self._stdin, protocol=pickle.HIGHEST_PROTOCOL)
+        self._stdin.flush()
+
+    def update(self, key: str, batch: np.ndarray) -> None:
+        with self._lock:
+            self._send(("update", key, batch))
+
+    def get(self, key: str) -> dict:
+        with self._lock:
+            self._send(("get", key))
+            status, payload = pickle.load(self._stdout)  # nosec B301 —— 本包自带的统计进程回的数据
+        if status != "ok":
+            raise RuntimeError(f"Stats for {key} failed: {payload}")
+        return payload
+
+    def drop(self, key: str) -> None:
+        with self._lock, contextlib.suppress(OSError):
+            self._send(("drop", key))
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            self._stdin.close()
+        try:
+            self._proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait()
 
 
 class _DirectMppEncoder:
@@ -803,14 +857,15 @@ class _DirectMppEncoder:
     写一帧就是一次拷贝；写入本身就复制了画面，送进来的数组不必再拷一份。
     """
 
-    def __init__(self, video_path: Path, fps: int, video_encoder: VideoEncoderConfig):
-        from .compute_stats import RunningQuantileStats
+    _ids = itertools.count()
 
+    def __init__(self, video_path: Path, fps: int, video_encoder: VideoEncoderConfig, stats: StatsProcess):
         self.video_path = video_path
         self.fps = fps
         self.video_encoder = video_encoder
         self.stats_every = video_encoder.resolved_stats_every()
-        self.stats_tracker = RunningQuantileStats()
+        self.stats = stats
+        self.stats_key = f"{video_path.name}#{next(self._ids)}"
         self.frame_count = 0
         self.writer: RkmppH264Writer | None = None
         self.shape: tuple[int, int] | None = None
@@ -828,18 +883,23 @@ class _DirectMppEncoder:
         assert self.writer is not None
         self.writer.write(frame_data)
         # Xbotics：每几帧算一次图像统计（ARM 板子默认 10）；前两帧总算，保证统计至少两个样本
+        # 统计在单独的进程里算（StatsProcess），这里只发缩小后的画面
         if self.frame_count < 2 or self.frame_count % self.stats_every == 0:
-            _update_frame_stats(self.stats_tracker, frame_data)
+            self.stats.update(self.stats_key, _stats_batch(frame_data))
         self.frame_count += 1
 
     def finish(self) -> dict | None:
         if self.writer is not None:
             self.writer.close()
-        return self.stats_tracker.get_statistics() if self.frame_count >= 2 else None
+        if self.frame_count < 2:
+            self.stats.drop(self.stats_key)
+            return None
+        return self.stats.get(self.stats_key)
 
     def abort(self) -> None:
         if self.writer is not None:
             self.writer.abort()
+        self.stats.drop(self.stats_key)
 
 
 class _CameraEncoderThread(threading.Thread):
@@ -944,7 +1004,7 @@ class _CameraEncoderThread(threading.Thread):
                         container.mux(packet)
 
                 if frame_count < 2 or frame_count % stats_every == 0:
-                    _update_frame_stats(stats_tracker, frame_data)
+                    stats_tracker.update(_stats_batch(frame_data))
 
                 frame_count += 1
 
@@ -1028,6 +1088,7 @@ class StreamingVideoEncoder:
         # 存完一条就按已知尺寸预先启动下一条的编码子进程，放在 _spare 里
         self._direct: dict[str, _DirectMppEncoder] = {}
         self._spare: dict[str, _DirectMppEncoder] = {}
+        self._stats_process: StatsProcess | None = None
         self._temp_root: Path | None = None
         self._episode_active = False
         self._closed = False
@@ -1088,9 +1149,11 @@ class StreamingVideoEncoder:
 
     def _new_direct(self, video_key: str, encoder: VideoEncoderConfig) -> "_DirectMppEncoder":
         assert self._temp_root is not None
+        if self._stats_process is None:
+            self._stats_process = StatsProcess()
         temp_video_dir = Path(tempfile.mkdtemp(dir=self._temp_root))
         video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
-        return _DirectMppEncoder(video_path, self.fps, encoder)
+        return _DirectMppEncoder(video_path, self.fps, encoder, self._stats_process)
 
     def _prepare_next_episode(self, video_key: str, finished: "_DirectMppEncoder") -> None:
         """按这一条的画面尺寸预先启动下一条的编码子进程；起不来就算了，下一条照旧在第一帧时启动。"""
@@ -1241,6 +1304,9 @@ class StreamingVideoEncoder:
             spare.abort()
             shutil.rmtree(str(spare.video_path.parent), ignore_errors=True)
         self._spare.clear()
+        if self._stats_process is not None:
+            self._stats_process.close()
+            self._stats_process = None
         self._closed = True
 
     def _cleanup(self) -> None:
