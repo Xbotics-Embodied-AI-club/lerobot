@@ -878,6 +878,10 @@ class _DirectMppEncoder:
 
     def feed(self, image: np.ndarray) -> None:
         frame_data = _as_hwc(image, is_depth=False)
+        if self.writer is not None and self.frame_count == 0 and self.shape != frame_data.shape[:2]:
+            # 预先启动时按特征登记的尺寸开的，实际画面不一样（例如相机加了旋转）：按实际尺寸重开
+            self.writer.abort()
+            self.writer = None
         if self.writer is None:
             self.open(*frame_data.shape[:2])
         assert self.writer is not None
@@ -1154,6 +1158,25 @@ class StreamingVideoEncoder:
         temp_video_dir = Path(tempfile.mkdtemp(dir=self._temp_root))
         video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
         return _DirectMppEncoder(video_path, self.fps, encoder, self._stats_process)
+
+    def prepare(self, frame_sizes: dict[str, tuple[int, int]], temp_dir: Path) -> None:
+        """录制开始前，按特征登记的画面尺寸（高, 宽）预先启动第一条的 MPP 编码子进程与统计进程（Xbotics）。
+
+        不走 MPP 的相机不做任何事。起不来只记一条警告，第一条照旧在第一帧时启动。
+        """
+        if self._rgb_encoder.vcodec != RKMPP_VCODEC:
+            return
+        self._temp_root = Path(temp_dir)
+        for video_key, (height, width) in frame_sizes.items():
+            if video_key in self._spare:
+                continue
+            try:
+                spare = self._new_direct(video_key, self._rgb_encoder)
+                spare.open(height, width)
+            except Exception as e:
+                logger.warning(f"Could not pre-start the encoder for {video_key}: {e}")
+                continue
+            self._spare[video_key] = spare
 
     def _prepare_next_episode(self, video_key: str, finished: "_DirectMppEncoder") -> None:
         """按这一条的画面尺寸预先启动下一条的编码子进程；起不来就算了，下一条照旧在第一帧时启动。"""

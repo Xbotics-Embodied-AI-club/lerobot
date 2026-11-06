@@ -355,6 +355,42 @@ def test_mpp_streaming_cancel_and_close_clean_up(on_rockchip, fake_writer, tmp_p
     assert {d for d in tmp_path.iterdir() if d.is_dir()} == finished_dirs
 
 
+def test_mpp_streaming_prepare_prestarts_the_first_episode(on_rockchip, fake_writer, tmp_path):
+    """录制开始前按登记的尺寸起好第一条的编码子进程；第一条直接用上，第一帧时不再新开。"""
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP))
+    encoder.prepare(dict.fromkeys(KEYS, (48, 64)), temp_dir=tmp_path)
+    prestarted = list(fake_writer.instances)
+    assert len(prestarted) == 2 and all(w.size == (64, 48) for w in prestarted)
+
+    encoder.start_episode(video_keys=KEYS, temp_dir=tmp_path)
+    for frame in _episode_frames(3):
+        for key in KEYS:
+            encoder.feed_frame(key, frame)
+    encoder.finish_episode()
+    assert [len(w.frames) for w in prestarted] == [3, 3]
+    encoder.close()
+
+
+def test_mpp_streaming_reopens_when_the_registered_size_is_wrong(on_rockchip, fake_writer, tmp_path):
+    """登记的尺寸与实际画面不同（例如相机加了旋转）：第一帧时停掉预先起的，按实际尺寸重开，不报错。"""
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec=RKMPP))
+    encoder.prepare({KEYS[0]: (64, 48)}, temp_dir=tmp_path)
+    (wrong,) = fake_writer.instances
+    encoder.start_episode(video_keys=KEYS[:1], temp_dir=tmp_path)
+    encoder.feed_frame(KEYS[0], _episode_frames(1)[0])
+    assert wrong.closed and not wrong.frames
+    reopened = fake_writer.instances[1]
+    assert reopened.size == (64, 48) and len(reopened.frames) == 1
+    encoder.close()
+
+
+def test_prepare_does_nothing_without_mpp(not_on_rockchip, tmp_path):
+    encoder = video_utils.StreamingVideoEncoder(fps=30, rgb_encoder=RGBEncoderConfig(vcodec="h264"))
+    encoder.prepare({KEYS[0]: (48, 64)}, temp_dir=tmp_path)
+    assert encoder._spare == {} and list(tmp_path.iterdir()) == []
+    encoder.close()
+
+
 def test_stats_worker_imports_no_lerobot():
     """统计进程按路径加载 RunningQuantileStats，不导入 lerobot 包（端侧计算平台上 lerobot.datasets 一导入就几十秒）。"""
     import subprocess

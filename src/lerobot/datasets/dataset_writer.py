@@ -142,6 +142,9 @@ class DatasetWriter:
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
+        if streaming_encoder is not None:
+            # Xbotics：边录边编走 MPP 时，录制开始前就把第一条的编码子进程与统计进程起好，不占第一条开头那几拍
+            streaming_encoder.prepare(self._registered_frame_sizes(), temp_dir=root)
 
         # Writer state
         self.image_writer: AsyncImageWriter | None = None
@@ -152,6 +155,19 @@ class DatasetWriter:
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
         self._finalized = False
+
+    def _registered_frame_sizes(self) -> dict[str, tuple[int, int]]:
+        """RGB 视频特征登记的画面尺寸 {键: (高, 宽)}，按特征里的 names 找高、宽（没有 names 的跳过）。"""
+        sizes = {}
+        for key in self._meta.video_keys:
+            if key in self._meta.depth_keys:
+                continue
+            feature = self._meta.features[key]
+            names = feature.get("names") or []
+            if "height" in names and "width" in names:
+                shape = feature["shape"]
+                sizes[key] = (int(shape[names.index("height")]), int(shape[names.index("width")]))
+        return sizes
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
