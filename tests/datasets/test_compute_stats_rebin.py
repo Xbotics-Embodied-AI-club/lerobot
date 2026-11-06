@@ -65,3 +65,27 @@ def test_rebin_with_empty_histogram():
     reference_adjust(expected)
     tracker._adjust_histograms()
     np.testing.assert_array_equal(tracker._histograms[0], expected._histograms[0])
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_uint8_histogram_shortcut_matches_per_pixel(seed):
+    """uint8 画面走「先数取值再分桶」，同一批数据转成 float32 走原来的逐像素分桶：直方图与全部统计逐位相同。
+
+    若捷径定错了桶（左右闭合搞反、漏了最后一桶的右端）或次数没乘对，某个桶的计数就会不等。
+    取值集中在少数几个灰度、并让范围逐批扩大（触发重新分桶），覆盖正好落在桶边界上的取值。
+    """
+    rng = np.random.default_rng(seed)
+    bins = int(rng.choice([7, 255, 5000]))
+    fast = RunningQuantileStats(num_quantile_bins=bins)
+    slow = RunningQuantileStats(num_quantile_bins=bins)
+    for step in range(6):
+        lo = max(0, 100 - 20 * step)
+        hi = min(256, 120 + 25 * step)
+        levels = rng.integers(lo, hi, size=int(rng.integers(1, 12)))
+        batch = rng.choice(levels, size=(int(rng.integers(2, 3000)), 3)).astype(np.uint8)
+        fast.update(batch)
+        slow.update(batch.astype(np.float32))
+    for got, want in zip(fast._histograms, slow._histograms, strict=True):
+        np.testing.assert_array_equal(got, want)
+    for key, value in slow.get_statistics().items():
+        np.testing.assert_array_equal(fast.get_statistics()[key], value)

@@ -59,6 +59,7 @@ class RunningQuantileStats:
             batch: An array where all dimensions except the last are batch dimensions.
         """
         batch = batch.reshape(-1, batch.shape[-1])
+        raw_uint8 = batch if batch.dtype == np.uint8 else None
         # Promote integer and low-precision inputs before computing squared statistics.
         batch = batch.astype(np.result_type(batch.dtype, np.float32), copy=False)
         num_elements, vector_length = batch.shape
@@ -98,7 +99,7 @@ class RunningQuantileStats:
             num_elements / self._count
         )
 
-        self._update_histograms(batch)
+        self._update_histograms(batch, raw_uint8)
 
     def get_statistics(self) -> dict[str, np.ndarray]:
         """Compute and return the statistics of the vectors processed so far.
@@ -158,10 +159,23 @@ class RunningQuantileStats:
             self._histograms[i] = new_hist
             self._bin_edges[i] = new_edges
 
-    def _update_histograms(self, batch: np.ndarray) -> None:
-        """Update histograms with new vectors."""
+    def _update_histograms(self, batch: np.ndarray, raw_uint8: np.ndarray | None = None) -> None:
+        """Update histograms with new vectors.
+
+        Xbotics：输入本是 uint8（相机画面）时，每个通道至多 256 种取值：先数每个取值出现几次，再只把出现过的取值
+        带着次数分桶。uint8 转 float32 是精确的；np.histogram 在边界是数组时带不带权重都用同一个
+        ``_search_sorted_inclusive`` 定桶，计数是整数累加，所以结果与逐个像素分桶逐位相同。
+        端侧计算平台上一帧（160×120×3）从约 11 ms 降到 1 ms 内，边录边编时不再拖住录制线程。
+        """
         for i in range(batch.shape[1]):
-            hist, _ = np.histogram(batch[:, i], bins=self._bin_edges[i])
+            if raw_uint8 is not None:
+                counts = np.bincount(raw_uint8[:, i], minlength=256)
+                present = np.flatnonzero(counts)
+                hist, _ = np.histogram(
+                    present.astype(batch.dtype), bins=self._bin_edges[i], weights=counts[present]
+                )
+            else:
+                hist, _ = np.histogram(batch[:, i], bins=self._bin_edges[i])
             self._histograms[i] += hist
 
     def _compute_quantiles(self) -> list[np.ndarray]:
