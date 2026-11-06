@@ -111,7 +111,10 @@ def test_gst_command_and_env():
     cmd = rkmpp.gst_command("/tmp/out.mp4", width=640, height=480, fps=30, qp=30, gop=2)
     pipeline = " ".join(cmd)
     assert cmd[0] == "gst-launch-1.0"
-    assert "rawvideoparse width=640 height=480 format=rgb framerate=30/1" in pipeline
+    assert (
+        "fdsrc fd=0 blocksize=921600 ! rawvideoparse width=640 height=480 format=rgb framerate=30/1"
+        in pipeline
+    )
     assert "mpph264enc rc-mode=fixqp qp-init=30 gop=2" in pipeline
     assert "mp4mux trak-timescale=12000" in pipeline
     assert "filesink location=/tmp/out.mp4" in pipeline
@@ -183,6 +186,20 @@ def test_writer_keeps_gst_output_off_the_terminal(monkeypatch, tmp_path):
     monkeypatch.setattr(rkmpp.subprocess, "Popen", FakeProc)
     rkmpp.RkmppH264Writer(tmp_path / "out.mp4", width=640, height=480, fps=30, qp=30, gop=2)
     assert seen["stdout"] is subprocess.DEVNULL
+
+
+@pytest.mark.skipif(not hasattr(__import__("fcntl"), "F_GETPIPE_SZ"), reason="只有 Linux 能调管道大小")
+def test_writer_pipe_holds_a_whole_frame(monkeypatch, tmp_path):
+    """管道开到 1 MB：640×480 RGB 一帧 900 KB，默认 64 KB 的管道要拆十几次写、编码进程读两百多次。"""
+    import fcntl
+
+    monkeypatch.setattr(rkmpp, "gst_command", lambda *a, **k: ["cat"])
+    writer = rkmpp.RkmppH264Writer(tmp_path / "out.mp4", width=640, height=480, fps=30, qp=30, gop=2)
+    try:
+        size = fcntl.fcntl(writer._proc.stdin.fileno(), fcntl.F_GETPIPE_SZ)
+        assert size >= 640 * 480 * 3
+    finally:
+        writer.abort()
 
 
 # ---------------------------------------------------------------- 两条编码路径

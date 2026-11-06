@@ -10,6 +10,8 @@ PyAV 自带的 FFmpeg 不含 rkmpp，所以经 GStreamer：RGB 原图从标准�
   RGA 碰到那段页就写坏内存、整机挂死（内核报 ``RGA_MMU unsupported memory larger than 4G``）。
   编码器本身直接吃 RGB，不需要 RGA。
 - 码率控制用固定 QP（``rc-mode=fixqp``），QP 取编码配置里的 ``crf``：默认 30，与 LeRobot 默认 crf 30 对齐。
+- 原图按整帧过管道：``fdsrc`` 一次读一整帧、管道开到 1 MB（Linux 默认 64 KB，fdsrc 默认一次读 4 KB，
+  一帧 900 KB 要读两百多次）。端侧计算平台上每路编码子进程从 34% 核降到 20%，录制时省下的正好让给读舵机。
 
 板子上的默认行为（见 :meth:`lerobot.configs.video.VideoEncoderConfig.resolve_vcodec`）：RGB 相机默认的
 libsvtav1 自动换成 MPP；设环境变量 ``LEROBOT_RKMPP=0`` 可关掉这个切换。
@@ -17,6 +19,7 @@ libsvtav1 自动换成 MPP；设环境变量 ``LEROBOT_RKMPP=0`` 可关掉这个
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
 import platform
@@ -89,12 +92,15 @@ def gst_command(video_path: str | Path, width: int, height: int, fps: int, qp: i
     ``erroneous pipeline: syntax error``。
     """
     pipeline = (
-        "fdsrc fd=0 ! "
+        f"fdsrc fd=0 blocksize={width * height * 3} ! "
         f"rawvideoparse width={width} height={height} format=rgb framerate={fps}/1 ! "
         f"mpph264enc rc-mode=fixqp qp-init={qp} gop={gop} ! h264parse ! "
         f"mp4mux trak-timescale={mp4_timescale(fps)} ! filesink"
     )
     return ["gst-launch-1.0", "-q", *pipeline.split(), f"location={video_path}"]
+
+
+PIPE_SIZE = 1 << 20  # Linux 默认 /proc/sys/fs/pipe-max-size 的上限
 
 
 def gst_env() -> dict[str, str]:
@@ -116,6 +122,11 @@ class RkmppH264Writer:
             stderr=subprocess.PIPE,
             env=gst_env(),
         )
+        # 管道开大到能装下一整帧：写一帧不再被拆成十几次唤醒。设不上（非 Linux、上限被调低）照常工作
+        with contextlib.suppress(AttributeError, OSError):
+            import fcntl
+
+            fcntl.fcntl(self._proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, PIPE_SIZE)
 
     def write(self, rgb: np.ndarray) -> None:
         if rgb.shape != self.shape or rgb.dtype != np.uint8:
