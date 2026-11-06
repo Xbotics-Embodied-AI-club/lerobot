@@ -94,19 +94,34 @@ tensorboard --logdir outputs/train --bind_all                     # 同时查看
 | 图像统计 | 边录边编码时每 10 帧计算一次（前两帧必算） | 逐帧（不变） | `--dataset.rgb_encoder.stats_every=N` |
 | 预览 | `--display_data=true` 且无桌面时，端侧计算平台自行提供网页：用浏览器打开 `http://<端侧IP>:9090`（仅需输入该短地址） | 有桌面时仍使用原生 rerun | `--display_mode=web` 显式指定；`LEROBOT_WEB_PREVIEW_HZ`（默认 10）、`LEROBOT_WEB_PREVIEW_PORT`（默认 9090） |
 
-实测（星禾套件端侧计算平台，两路 640×480 MJPG 相机，`lerobot-record` 40 s，`--dataset.streaming_encoding=true --display_data=true`，
-不添加任何端侧计算平台专用参数）：自动选用 MPP，预览自动改为网页，共录制 1152 帧，平均 28.8 fps，读回正常，图像统计正常；
-网页预览 10 次/秒，电脑上仅需打开 Firefox 并输入短地址，即可显示两路画面与关节曲线。
+实测（2026-11-06，星禾套件端侧计算平台，两路 640×480 MJPG 相机，从臂舵机真读、主臂按真机实测耗时模拟，
+`lerobot-record --dataset.streaming_encoding=true`，同一次录制连录三条、每条 20 秒）：一分钟里「Record loop is running slower」
+警告 4 条（`--display_data=false`）、7 条（`--display_data=true`），每条只慢一拍；每条 594–595 帧（满额 600）；三条同存一个视频文件，读回正常。
+改动前同样条件下一分钟 138 条，且第三条存盘时崩溃。
 
 - MPP 判定：ARM + 设备树标明为带 MPP 的芯片 + 已安装 `gst-launch-1.0` 与 GStreamer 的 `mpph264enc` 插件；
   端侧计算平台上安装 `gstreamer1.0-tools` 与 MPP 的 GStreamer 插件包即可。
 - `GST_MPP_NO_RGA=1` 不可省略：插件默认借助 RGA 搬运帧，端侧计算平台有一段物理内存位于 4 GB 以上，RGA 访问该区域会写坏内存，导致整机停止响应。
 - 每 10 帧计算一次的统计与逐帧计算相比：均值差 ≤0.00025、q99 差 ≤0.012。
 - 网页预览要做到只靠浏览器，需要两项处理：9090 是跳转页（按浏览器访问端侧计算平台所用的主机名拼出数据地址，再跳转到 9091 的查看器）；
-  rerun 0.3x 的数据服务默认只放行 localhost 页面的跨源请求，此处放行查看器端口。推送在子进程中进行，不拖慢录制。
+  rerun 0.3x 的数据服务默认只放行 localhost 页面的跨源请求，此处放行查看器端口。
+- 网页预览不在板子上解码或压图：MJPG 相机送来的原始 JPEG 原样转发（`lerobot.cameras.jpeg_passthrough`），由打开网页的电脑解码渲染。
+  推送服务单独起一个解释器运行（`lerobot.utils.rerun_web_server`，只导入 rerun），优先级低于录制；
+  用 multiprocessing 起会把录制程序整个重新导入，单核约 30 秒，正好压在第一条上。推送稳定后约占 10–17% 个核。
 - 录数据建议添加 `--dataset.streaming_encoding=true`（边录边编码，存盘几乎无需等待）；不添加时画面先存为 PNG，每段结束后再用 MPP 编码。
 - 「是否有桌面」按显示服务是否正在运行来判定：本机显示 `DISPLAY=:N` 需存在 `/tmp/.X11-unix/XN`，Wayland 需存在其 socket；远端显示（如 SSH 转发的 `localhost:10.0`）直接采信。端侧计算平台厂家镜像在每个登录 shell 中固定设置 `DISPLAY=:0`，桌面关闭后仍保留该设置，而网页终端属于登录 shell —— 仅检查变量会去启动原生查看器；启动失败时 rerun 会把每帧原图缓存在内存中，一分多钟即耗尽 4 GB 内存而被系统终止。录制时的按键监听（`n` / `r` / `q`）使用同一判定，因此在网页终端中按键方能生效。
 - GStreamer 编码子进程的标准输出重定向到 `/dev/null`：连接终端时 `gst-launch-1.0` 每秒输出多行管道位置信息（`-q` 无法关闭），会使网页终端输出大量信息。
+
+录制循环每拍要读主从臂舵机，舵机总线一次约 1.7 ms；同一进程里其他线程忙时，读舵机的线程要隔 5–10 ms 才能接着读，一拍就超时。
+所以录制进程里只保留必须的工作，其余挪出去：
+
+- MPP 编码不开编码线程：录制主线程直接把画面写进 gst 编码子进程的管道（fdsrc 一次读一整帧、管道 1 MB；每路编码子进程 34% 核 → 20%）。
+  每路一个编码线程时，读舵机单次超过 10 ms 的次数是直写的十倍（1200 次里 36 次对 2–4 次）。
+- 图像统计在单独的进程里算（`lerobot.datasets.stats_worker`，只导入 numpy、按路径加载 `RunningQuantileStats`），主线程只发缩小后的画面；
+  一次统计约 13 ms，放在主线程两路相机同一拍各算一次就超时，放在同进程线程又拖慢读舵机。结果与在本进程里算逐位相同。
+- 录制开始前就按特征登记的画面尺寸起好第一条的编码子进程与统计进程；每存完一条，就起好下一条的。
+- MPP 写出的视频时间单位取 FFmpeg 重新封装后不变的值（30 fps 为 1/12000）：mp4mux 默认 1/3000，同一个视频文件拼第三条时时间戳倒退报错。
+- `RunningQuantileStats` 两处提速、结果逐位不变：像素范围扩大时的重新分桶整批计算（每次 50 ms → 4 ms）；uint8 画面的直方图先数取值再分桶。
 
 ## LingBot-VLA 2.0（`lingbot_vla_v2`，只在 0.6 线）
 
