@@ -173,6 +173,24 @@ def test_mp4mux_default_timescale_breaks_the_third_episode(tmp_path):
         _append_three_episodes(tmp_path, 30, 3000)
 
 
+@pytest.mark.parametrize("euid, prefixed", [(0, True), (1000, False)])
+def test_writer_raises_encoder_priority_as_root(monkeypatch, tmp_path, euid, prefixed):
+    """以 root 运行时编码子进程高一档（nice -5），免得被相机解码挤到后面、管道写满；不是 root 不加。"""
+    seen = {}
+
+    class FakeProc:
+        stdin = None
+
+        def __init__(self, cmd, **kwargs):
+            seen["cmd"] = cmd
+
+    monkeypatch.setattr(rkmpp.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(rkmpp.os, "geteuid", lambda: euid)
+    rkmpp.RkmppH264Writer(tmp_path / "out.mp4", width=640, height=480, fps=30, qp=30, gop=2)
+    assert (seen["cmd"][:3] == ["nice", "-n", "-5"]) is prefixed
+    assert seen["cmd"][3 if prefixed else 0] == "gst-launch-1.0"
+
+
 def test_writer_keeps_gst_output_off_the_terminal(monkeypatch, tmp_path):
     """标准输出是终端时，gst-launch 每秒刷好多行管道位置（``0:00:01.2 / 99:99:99.``），``-q`` 关不掉；
     网页终端里录数据会被它刷屏。"""

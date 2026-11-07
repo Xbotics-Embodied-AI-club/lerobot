@@ -118,8 +118,13 @@ class RkmppH264Writer:
         self.shape = (height, width, 3)
         # gst-launch 把各参数拼起来再解析管道，不经 shell。
         # 标准输出不接终端：接着终端时它每秒刷好多行管道位置（-q 关不掉），网页终端里录数据会被刷屏
+        command = gst_command(self.video_path, width, height, fps, qp, gop)
+        if os.geteuid() == 0:
+            # 编码子进程高一档（nice -5）：录制主线程用实时调度后，相机解码线程会把它挤到后面，
+            # 它跟不上时管道写满，录制主线程写一帧要等十几毫秒（以 root 运行才能调高）
+            command = ["nice", "-n", "-5", *command]
         self._proc = subprocess.Popen(  # nosec B603
-            gst_command(self.video_path, width, height, fps, qp, gop),
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

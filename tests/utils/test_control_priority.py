@@ -60,3 +60,32 @@ def test_without_permission_recording_continues(monkeypatch, caplog):
     monkeypatch.setenv("LEROBOT_LOOP_RT", "10")
     assert not control_priority.raise_control_loop_priority()
     assert "recording continues" in caplog.text
+
+
+@pytest.fixture
+def gc_state():
+    import gc
+
+    yield gc
+    control_priority.release_gc()
+    gc.unfreeze()
+    gc.enable()
+
+
+def test_gc_held_only_when_realtime_is_on(gc_state, monkeypatch):
+    monkeypatch.setenv("LEROBOT_LOOP_RT", "0")
+    assert not control_priority.hold_gc()
+    assert gc_state.isenabled()
+    control_priority.collect_gc_between_episodes()  # 没接管时什么都不做
+    assert gc_state.isenabled()
+
+
+def test_gc_moves_between_episodes(gc_state, monkeypatch):
+    """开启后：录制中途不自动回收（已有对象冻结）；两条之间回收后仍关着；录制结束恢复。"""
+    monkeypatch.setenv("LEROBOT_LOOP_RT", "10")
+    assert control_priority.hold_gc()
+    assert not gc_state.isenabled() and gc_state.get_freeze_count() > 0
+    control_priority.collect_gc_between_episodes()
+    assert not gc_state.isenabled()
+    control_priority.release_gc()
+    assert gc_state.isenabled() and gc_state.get_freeze_count() == 0

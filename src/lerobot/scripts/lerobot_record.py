@@ -152,7 +152,12 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.control_priority import raise_control_loop_priority
+from lerobot.utils.control_priority import (
+    collect_gc_between_episodes,
+    hold_gc,
+    raise_control_loop_priority,
+    release_gc,
+)
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
@@ -462,8 +467,9 @@ def record(
         robot.connect()
 
         listener, events = init_keyboard_listener()
-        # Xbotics：相机、编码、统计、预览、按键监听都已起好，录制主线程改用实时调度（端侧计算平台上默认）
+        # Xbotics：相机、编码、统计、预览、按键监听都已起好，录制主线程改用实时调度、垃圾回收挪到两条之间（端侧计算平台上默认）
         raise_control_loop_priority()
+        hold_gc()
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
@@ -516,11 +522,14 @@ def record(
                     events["rerecord_episode"] = False
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
+                    collect_gc_between_episodes()
                     continue
 
                 dataset.save_episode()
+                collect_gc_between_episodes()
                 recorded_episodes += 1
     finally:
+        release_gc()
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 
         if dataset:
