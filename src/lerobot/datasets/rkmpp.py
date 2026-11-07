@@ -100,7 +100,10 @@ def gst_command(video_path: str | Path, width: int, height: int, fps: int, qp: i
     return ["gst-launch-1.0", "-q", *pipeline.split(), f"location={video_path}"]
 
 
-PIPE_SIZE = 1 << 20  # Linux 默认 /proc/sys/fs/pipe-max-size 的上限
+# 管道大小：先试 4 MB（装得下 4 帧：编码子进程收到第一帧时初始化 MPP 约 80 ms，这期间不读管道，
+# 只装得下一帧时录制主线程写第二帧就要等这么久）；超过 /proc/sys/fs/pipe-max-size（默认 1 MB）要 root，
+# 不是 root 就退回 1 MB。
+PIPE_SIZES = (4 << 20, 1 << 20)
 
 
 def gst_env() -> dict[str, str]:
@@ -122,11 +125,16 @@ class RkmppH264Writer:
             stderr=subprocess.PIPE,
             env=gst_env(),
         )
-        # 管道开大到能装下一整帧：写一帧不再被拆成十几次唤醒。设不上（非 Linux、上限被调低）照常工作
-        with contextlib.suppress(AttributeError, OSError):
+        # 管道开大到能装下整帧：写一帧不再被拆成十几次唤醒。都设不上（非 Linux、上限被调低）照常工作
+        with contextlib.suppress(AttributeError):
             import fcntl
 
-            fcntl.fcntl(self._proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, PIPE_SIZE)
+            for size in PIPE_SIZES:
+                try:
+                    fcntl.fcntl(self._proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, size)
+                    break
+                except OSError:
+                    continue
 
     def write(self, rgb: np.ndarray) -> None:
         if rgb.shape != self.shape or rgb.dtype != np.uint8:
