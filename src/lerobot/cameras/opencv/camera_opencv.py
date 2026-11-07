@@ -39,7 +39,6 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from .. import jpeg_passthrough
 from ..camera import Camera
 from ..utils import get_cv2_rotation
-from .capture_process import CaptureProcess
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -121,8 +120,6 @@ class OpenCVCamera(Camera):
         self.new_frame_event: Event = Event()
         # MJPG 相机这一帧的原始 JPEG（Xbotics：直通网页预览，见 lerobot.cameras.jpeg_passthrough）
         self._last_jpeg: bytes | None = None
-        # Xbotics：端侧计算平台上相机采集放在单独的进程里（见 capture_process），这时不开读取线程
-        self._capture: CaptureProcess | None = None
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = config.backend
@@ -146,70 +143,7 @@ class OpenCVCamera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        if self._capture is not None:
-            return self._capture.alive
         return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
-
-    def _wants_capture_process(self) -> bool:
-        """是否把采集放进单独的进程（Xbotics）。
-
-        端侧计算平台（带 MPP 的瑞芯微板子）上、V4L2 设备、MJPG、宽高帧率都给了时默认开启；
-        ``LEROBOT_CAMERA_PROCESS=1`` / ``0`` 强制开 / 关（强制开时也要求宽高帧率都给了，共享内存按它开）。
-        """
-        if self.capture_width is None or self.capture_height is None or self.fps is None:
-            return False
-        forced = os.environ.get("LEROBOT_CAMERA_PROCESS")
-        if forced in ("0", "1"):
-            return forced == "1"
-        if platform.system() != "Linux" or self.config.fourcc != "MJPG":
-            return False
-        if not str(self.index_or_path).startswith("/dev/"):
-            return False
-        from lerobot.datasets.rkmpp import rkmpp_available
-
-        return rkmpp_available()
-
-    def _connect_capture_process(self, warmup: bool) -> None:
-        cfg = {
-            "index_or_path": str(self.index_or_path),
-            "backend": int(self.backend),
-            "capture_width": self.capture_width,
-            "capture_height": self.capture_height,
-            "fps": self.fps,
-            "fourcc": self.config.fourcc,
-            "color_mode": self.color_mode.value,
-            "rotation": self.rotation,
-        }
-        try:
-            self._capture = CaptureProcess(cfg)
-        except ConnectionError as e:
-            raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
-            ) from e
-        except RuntimeError as e:
-            self._reset_connection_settings()
-            raise RuntimeError(f"{self} {e}") from e
-        try:
-            if warmup and self.warmup_s > 0:
-                start_time = time.time()
-                while time.time() - start_time < self.warmup_s:
-                    self.async_read(timeout_ms=self.warmup_s * 1000)
-                    time.sleep(0.1)
-                if self._capture.latest() is None:
-                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
-        except BaseException:
-            self._cleanup_resources()
-            self._reset_connection_settings()
-            raise
-        logger.info(f"{self} connected (capture process).")
-
-    def _frame_from_capture(self, got: tuple | None) -> NDArray[Any] | None:
-        if got is None:
-            return None
-        frame, jpeg, _ = got
-        if jpeg is not None:
-            jpeg_passthrough.remember(frame, jpeg)
-        return frame
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
@@ -232,10 +166,6 @@ class OpenCVCamera(Camera):
         # Use 1 thread for OpenCV operations to avoid potential conflicts or
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
-
-        if self._wants_capture_process():
-            self._connect_capture_process(warmup)
-            return
 
         self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
 
@@ -487,11 +417,6 @@ class OpenCVCamera(Camera):
                 f"{self} read() color_mode parameter is deprecated and will be removed in future versions."
             )
 
-        if self._capture is not None:
-            frame = self.async_read(timeout_ms=10000)
-            logger.debug(f"{self} read took: {(time.perf_counter() - start_time) * 1e3:.1f}ms")
-            return frame
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -612,9 +537,6 @@ class OpenCVCamera(Camera):
 
     def _cleanup_resources(self) -> None:
         """Stop background reads and release the capture, including after partial setup."""
-        if self._capture is not None:
-            self._capture.close()
-            self._capture = None
         read_thread = self.thread
         videocapture = self.videocapture
 
@@ -657,14 +579,6 @@ class OpenCVCamera(Camera):
             RuntimeError: If an unexpected error occurs.
         """
 
-        if self._capture is not None:
-            frame = self._frame_from_capture(self._capture.wait_new(timeout_ms / 1000.0))
-            if frame is None:
-                if not self._capture.alive:
-                    raise RuntimeError(f"{self} capture process is not running.")
-                raise TimeoutError(f"Timed out waiting for frame from camera {self} after {timeout_ms} ms.")
-            return frame
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -700,17 +614,6 @@ class OpenCVCamera(Camera):
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
 
-        if self._capture is not None:
-            got = self._capture.latest()
-            if got is None:
-                raise RuntimeError(f"{self} has not captured any frames yet.")
-            age_ms = (time.perf_counter() - got[2]) * 1e3
-            if age_ms > max_age_ms:
-                raise TimeoutError(
-                    f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
-                )
-            return self._frame_from_capture(got)
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -739,7 +642,7 @@ class OpenCVCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.
         """
-        if not self.is_connected and self.thread is None and self._capture is None:
+        if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(f"{self} not connected.")
 
         self._cleanup_resources()

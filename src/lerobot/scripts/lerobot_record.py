@@ -152,6 +152,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.control_priority import raise_control_loop_priority
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
@@ -461,6 +462,8 @@ def record(
         robot.connect()
 
         listener, events = init_keyboard_listener()
+        # Xbotics：相机、编码、统计、预览、按键监听都已起好，录制主线程改用实时调度（端侧计算平台上默认）
+        raise_control_loop_priority()
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
