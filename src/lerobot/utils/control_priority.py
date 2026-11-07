@@ -16,6 +16,7 @@ import gc
 import logging
 import os
 import platform
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,15 @@ def raise_control_loop_priority() -> bool:
 # ---------------------------------------------------------------- 垃圾回收不在录制中途做
 
 _gc_held = False
+# 完整回收期间所有 Python 线程都停着（端侧计算平台上约 1 秒），相机读取线程也没法更新画面；
+# 回收完先等一会儿让相机交出新画面，否则录制循环第一拍读到的画面「过期」（read_latest 超过 500 ms）就报错退出
+_SETTLE_S = 0.2
+
+
+def _collect_and_freeze() -> None:
+    gc.collect()
+    gc.freeze()
+    time.sleep(_SETTLE_S)
 
 
 def hold_gc() -> bool:
@@ -70,9 +80,8 @@ def hold_gc() -> bool:
     global _gc_held
     if _configured_priority() is None:
         return False
-    gc.collect()
-    gc.freeze()
     gc.disable()
+    _collect_and_freeze()
     _gc_held = True
     return True
 
@@ -80,8 +89,7 @@ def hold_gc() -> bool:
 def collect_gc_between_episodes() -> None:
     """两条之间（存盘后，录制循环不在跑）做一次完整回收并重新冻结。"""
     if _gc_held:
-        gc.collect()
-        gc.freeze()
+        _collect_and_freeze()
 
 
 def release_gc() -> None:
