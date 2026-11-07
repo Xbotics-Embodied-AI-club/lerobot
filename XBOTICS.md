@@ -94,9 +94,9 @@ tensorboard --logdir outputs/train --bind_all                     # 同时查看
 | 图像统计 | 边录边编码时每 10 帧计算一次（前两帧必算） | 逐帧（不变） | `--dataset.rgb_encoder.stats_every=N` |
 | 预览 | `--display_data=true` 且无桌面时，端侧计算平台自行提供网页：用浏览器打开 `http://<端侧IP>:9090`（仅需输入该短地址） | 有桌面时仍使用原生 rerun | `--display_mode=web` 显式指定；`LEROBOT_WEB_PREVIEW_HZ`（默认 10）、`LEROBOT_WEB_PREVIEW_PORT`（默认 9090） |
 
-实测（2026-11-06，星禾套件端侧计算平台，两路 640×480 MJPG 相机，从臂舵机真读、主臂按真机实测耗时模拟，
-`lerobot-record --dataset.streaming_encoding=true`，同一次录制连录三条、每条 20 秒）：一分钟里「Record loop is running slower」
-警告 4 条（`--display_data=false`）、7 条（`--display_data=true`），每条只慢一拍；每条 594–595 帧（满额 600）；三条同存一个视频文件，读回正常。
+实测（2026-11-07，星禾套件端侧计算平台，两路 640×480 MJPG 相机，从臂舵机真读、主臂按真机实测耗时模拟，
+`lerobot-record --dataset.streaming_encoding=true`，同一次录制连录三条、每条 20 秒）：「Record loop is running slower」警告 0 条，
+`--display_data=false` 与 `--display_data=true` 都是；每条 595–597 帧（满额 600），最慢一拍的处理时间 17 ms；三条同存一个视频文件，读回正常。
 改动前同样条件下一分钟 138 条，且第三条存盘时崩溃。
 
 - MPP 判定：ARM + 设备树标明为带 MPP 的芯片 + 已安装 `gst-launch-1.0` 与 GStreamer 的 `mpph264enc` 插件；
@@ -120,6 +120,12 @@ tensorboard --logdir outputs/train --bind_all                     # 同时查看
 - 图像统计在单独的进程里算（`lerobot.datasets.stats_worker`，只导入 numpy、按路径加载 `RunningQuantileStats`），主线程只发缩小后的画面；
   一次统计约 13 ms，放在主线程两路相机同一拍各算一次就超时，放在同进程线程又拖慢读舵机。结果与在本进程里算逐位相同。
 - 录制开始前就按特征登记的画面尺寸起好第一条的编码子进程与统计进程；每存完一条，就起好下一条的。
+- 录制主线程改用实时调度（SCHED_FIFO，优先级 10）：每来一帧，两路相机解码、两路编码、统计与主线程同时要 CPU，
+  4 个核排不开时主线程排在后面；改为实时调度后它一醒就先跑，一分钟 4–16 条警告降到 0 条。之后新建的线程与子进程回到普通调度。
+  端侧计算平台上默认开启（以 root 运行）；`LEROBOT_LOOP_RT=0` 关闭，`LEROBOT_LOOP_RT=<1–99>` 指定优先级；没有权限时只记一条警告。
+- Python 的自动垃圾回收不在录制中途做（与实时调度同一个开关）：录制前完整回收一次、冻结已有对象并关掉自动回收，每存完一条再回收一次；
+  自动回收无论在哪个线程触发，所有线程都要停下，录制中途实测单次 36–53 ms。回收完等 0.2 秒让相机交出新画面再继续。
+- 以 root 运行时 MPP 编码子进程高一档（nice -5），低于录制主线程、高于相机解码；否则它偶尔被挤到后面跟不上，管道写满，主线程写一帧要等十几毫秒。
 - MPP 写出的视频时间单位取 FFmpeg 重新封装后不变的值（30 fps 为 1/12000）：mp4mux 默认 1/3000，同一个视频文件拼第三条时时间戳倒退报错。
 - `RunningQuantileStats` 两处提速、结果逐位不变：像素范围扩大时的重新分桶整批计算（每次 50 ms → 4 ms）；uint8 画面的直方图先数取值再分桶。
 
